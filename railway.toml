@@ -1,0 +1,36 @@
+# railway.toml
+# ═══════════════════════════════════════════════════════════════════════
+#  NATIQA Platform — Railway.app Deployment Configuration
+#  Docs: https://docs.railway.app/reference/config-as-code
+# ═══════════════════════════════════════════════════════════════════════
+
+[build]
+# Point Railway at the backend subdirectory
+builder          = "DOCKERFILE"
+dockerfilePath   = "backend/Dockerfile"
+# Build context is the project root so backend/ and shared files are reachable
+buildCommand     = ""
+
+[deploy]
+startCommand          = "uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2 --log-level info"
+healthcheckPath       = "/api/health"
+healthcheckTimeout    = 30          # seconds Railway waits before marking unhealthy
+restartPolicyType     = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# Railway sets $PORT automatically — we just forward it to uvicorn above
+# Do NOT hardcode a port number here
+
+[environments.production]
+# These are overridden by Railway's environment variable dashboard.
+# Values here are just documentation-level defaults / comments.
+# Set the real secrets in Railway → Variables tab, NOT here.
+
+# DATABASE_URL      = "postgresql+asyncpg://..."   # injected by Railway Postgres plugin
+# REDIS_URL         = "redis://..."                # injected by Railway Redis plugin
+# SECRET_KEY        = ""    # openssl rand -hex 32
+# ENCRYPTION_KEY    = ""    # openssl rand -hex 32
+# CLAUDE_API_KEY    = ""    # sk-ant-...
+# RESEND_API_KEY    = ""    # re_...  (Phase 1.5)
+# DEBUG             = "False"
+# ENVIRONMENT       = "production"
