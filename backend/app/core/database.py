@@ -2,6 +2,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.pool import NullPool  # type: ignore
 from app.core.config import settings  # type: ignore
 from app.models.models import Base  # type: ignore
+from app.models import SubscriptionPlan
 import structlog  # type: ignore
 
 log = structlog.get_logger()
@@ -65,7 +66,7 @@ async def seed_admin():
             is_active=True,
             is_verified=True,
             approval_status=ApprovalStatus.APPROVED,
-            subscription_plan="pro",
+            subscription_plan=SubscriptionPlan.FREE,
         )
         session.add(admin)
         await session.commit()
