@@ -36,9 +36,10 @@ UNLIMITED = -1
 
 
 class SubscriptionPlan(str, PyEnum):
-    FREE       = "free"
-    PRO        = "pro"
-    ENTERPRISE = "enterprise"
+    FREE       = "FREE"
+    PRO        = "PRO"
+    ENTERPRISE = "ENTERPRISE"
+    TRIAL      = "TRIAL"
 
 
 @dataclass(frozen=True)
@@ -198,8 +199,8 @@ def get_effective_plan(user) -> tuple[SubscriptionPlan, PlanLimits]:
     if is_in_trial_period(user):
         return SubscriptionPlan.PRO, TRIAL_PLAN
 
-    plan_str = user.subscription_plan or "free"
-    plan_enum = SubscriptionPlan(plan_str)
+    plan_str = user.subscription_plan or "FREE"
+    plan_enum = SubscriptionPlan(plan_str.upper())
     return plan_enum, get_plan(plan_enum)
 
 

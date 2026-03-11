@@ -55,10 +55,10 @@ class DocumentType(str, PyEnum):
 
 
 class SubscriptionPlan(str, PyEnum):
-    FREE       = "free"
-    TRIAL      = "trial"
-    PRO        = "pro"
-    ENTERPRISE = "enterprise"
+    FREE       = "FREE"
+    TRIAL      = "TRIAL"
+    PRO        = "PRO"
+    ENTERPRISE = "ENTERPRISE"
 
 
 class ProjectStatus(str, PyEnum):
@@ -135,7 +135,7 @@ class Organization(Base):
     # Subscription
     subscription_plan: Mapped[SubscriptionPlan] = mapped_column(
         Enum(SubscriptionPlan, name="subscriptionplan"),
-        server_default="free",
+        server_default="FREE",
         default=SubscriptionPlan.FREE,
     )
     subscription_expires_at: Mapped[Optional[datetime]] = mapped_column(
