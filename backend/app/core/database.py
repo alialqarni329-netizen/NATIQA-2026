@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.pool import NullPool  # type: ignore
 from app.core.config import settings  # type: ignore
 from app.models.models import Base  # type: ignore
-from app.models import SubscriptionPlan
+from app.services.plans import SubscriptionPlan
 import structlog  # type: ignore
 
 log = structlog.get_logger()
