@@ -16,18 +16,13 @@ from app.core.config import settings
 
 
 # ─── Password hashing ────────────────────────────────────────────────
-def _prepare(password: str) -> bytes:
-    digest = hashlib.sha256(password.encode("utf-8")).digest()
-    return base64.b64encode(digest)
-
-
 def hash_password(password: str) -> str:
-    hashed = bcrypt.hashpw(_prepare(password), bcrypt.gensalt(rounds=12))
+    hashed = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12))
     return hashed.decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(_prepare(plain), hashed.encode("utf-8"))
+    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
 
 
 # ─── JWT ─────────────────────────────────────────────────────────────
