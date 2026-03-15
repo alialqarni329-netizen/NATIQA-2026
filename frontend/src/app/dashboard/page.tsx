@@ -200,20 +200,29 @@ export default function Dashboard() {
     }
   }, [router])
 
-  if (!mounted) return null
-  useEffect(() => { const t = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(t) }, [])
+  useEffect(() => {
+    const t = setInterval(() => setClock(new Date()), 1000)
+    return () => clearInterval(t)
+  }, [])
 
   const loadProjects = useCallback(async () => {
     try { const { data } = await projectsApi.list(); setProjs(data); setProj(p => p ?? data[0] ?? null) } catch { }
   }, [])
+
   useEffect(() => { loadProjects() }, [loadProjects])
 
   /* Departments this user can see — filtered by RBAC */
   const visibleDepts = ALL_DEPT_DEFS.filter(d => canAccessDept(d.value))
+  
   useEffect(() => {
-    if (!activeDept && visibleDepts.length > 0) setActiveDept(visibleDepts[0].value)
+    if (!activeDept && permissions) {
+      const visible = ALL_DEPT_DEFS.filter(d => canAccessDept(d.value))
+      if (visible.length > 0) setActiveDept(visible[0].value)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [permissions])
+
+  if (!mounted) return null
 
   const navItems = [
     { id: 'dash', icon: '▣', label: 'لوحة التحكم' },
