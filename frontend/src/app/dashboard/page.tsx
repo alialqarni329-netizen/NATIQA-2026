@@ -191,14 +191,19 @@ export default function Dashboard() {
   const [projs, setProjs] = useState<Project[]>([])
   const [clock, setClock] = useState(new Date())
   const [activeDept, setActiveDept] = useState<string | null>(null)
+  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    setTimeout(() => {
-      const token = localStorage.getItem('access_token')
-      const user = useAuthStore.getState().user
-      if (!token || !user) router.push('/login')
-    }, 800)
+    setMounted(true)
+    const token = localStorage.getItem('access_token')
+    const user = useAuthStore.getState().user
+    if (!token || !user) {
+      router.push('/login')
+      return
+    }
   }, [router])
+
+  if (!mounted) return null
   useEffect(() => { const t = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(t) }, [])
 
   const loadProjects = useCallback(async () => {
