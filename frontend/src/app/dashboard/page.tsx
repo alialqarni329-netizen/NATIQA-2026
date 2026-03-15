@@ -236,8 +236,6 @@ function Dashboard() {
     else setView(id)
   }
 
-  if (!mounted) return null
-
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', fontFamily: "'Tajawal',Arial,sans-serif", direction: 'rtl', color: '#ccd9ef', background: '#060d1a' }}>
       <style>{CSS}</style>
