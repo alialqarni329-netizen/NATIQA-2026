@@ -171,7 +171,6 @@ async def _send_otp_email(email: str, otp: str, business_name: str) -> None:
         log.error("Resend email delivery failed", email=email, error=str(exc))
 
 
-
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SCHEMAS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -327,7 +326,7 @@ async def register(
         hashed_password = hp(body.password),
         role            = UserRole.ANALYST,
         is_active       = False,
-        organization_id = org.id,         # ── Link to newly created Organization
+        organization_id = org.id,
         business_name   = body.business_name,
         document_type   = body.document_type,
         document_number = body.document_number,
@@ -447,23 +446,52 @@ async def resend_otp(
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# POST /auth/login  (hardened with Phase 1 gates)
+# POST /auth/login  — ⚠️ AUTH BYPASS ACTIVE (DEV ONLY)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-return TokenResponse(
-        access_token="fake-token", 
-        refresh_token="fake-token", 
-        user={
-            "id": "c2853f49-bca3-46fc-a755-9abd2d6e759f", 
-            "email": "ali_boss@natiqa.com", 
-            "full_name": "Ali Boss", 
-            "role": "super_admin", 
-            "is_admin": True, 
-            "business_name": "Natiqa", 
-            "totp_enabled": False, 
-            "trial": {"active": True, "days_remaining": 15, "ends_at": None, "just_activated": True}
-        }
+@router.post("/login", response_model=TokenResponse)
+async def login(
+    body:    LoginRequest,
+    request: Request,
+    db:      AsyncSession   = Depends(get_db),
+    redis:   aioredis.Redis = Depends(get_redis),
+):
+    # ⚠️ DEV BYPASS — skip all auth checks, return fake token
+    # TODO: remove before going to production
+    return TokenResponse(
+        access_token  = "dev-bypass-access-token",
+        refresh_token = "dev-bypass-refresh-token",
+        user = {
+            "id":            "c2853f49-bca3-46fc-a755-9abd2d6e759f",
+            "email":         "ali_boss@natiqa.com",
+            "full_name":     "Ali Boss",
+            "role":          "super_admin",
+            "is_admin":      True,
+            "business_name": "Natiqa",
+            "totp_enabled":  False,
+            "trial": {
+                "active":         True,
+                "days_remaining": 15,
+                "ends_at":        None,
+                "just_activated": True,
+            },
+        },
     )
+
+    # ── Lookup user ──────────────────────────────────────────────────
+    ip   = request.client.host if request.client else "unknown"
+    user = (await db.execute(select(User).where(User.email == body.email.lower()))).scalar_one_or_none()
+
+    async def fail(msg: str = "Invalid email or password") -> None:
+        if user:
+            user.failed_logins = (user.failed_logins or 0) + 1
+            if user.failed_logins >= MAX_FAILED_LOGINS:
+                user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=LOCK_DURATION_MINUTES)
+            await db.commit()
+        raise HTTPException(status_code=401, detail=msg)
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
 
     # ── Phase 1 Gates ────────────────────────────────────────────────
     if not user.is_verified:
@@ -478,14 +506,11 @@ return TokenResponse(
     # ────────────────────────────────────────────────────────────────
 
     if not user.is_active:
-        print(f"!!! LOGIN FAILED: User {body.email} is not active")
         await fail()
     if user.locked_until and user.locked_until > datetime.now(timezone.utc):
-        print(f"!!! LOGIN FAILED: User {body.email} is locked until {user.locked_until}")
         raise HTTPException(status_code=403,
             detail=f"Account locked until {user.locked_until.strftime('%H:%M')}. Contact admin.")
     if not verify_password(body.password, user.hashed_password):
-        print(f"!!! LOGIN FAILED: Password for {body.email} did not match verify_password()")
         await fail()
 
     if user.totp_enabled:
@@ -499,25 +524,18 @@ return TokenResponse(
     user.last_login    = datetime.now(timezone.utc)
 
     # ── Golden Trial Activation (first login after approval) ──────────
-    # Only activate if: approved, not yet started a trial, not on paid plan
-    from datetime import timedelta
-    from app.models.models import ApprovalStatus as _AS
     trial_activated = False
     if (
-        user.approval_status == _AS.APPROVED
-        and user.trial_starts_at is None          # never started trial
-        and str(user.subscription_plan) == "free" # not a paid user
+        user.approval_status == ApprovalStatus.APPROVED
+        and user.trial_starts_at is None
+        and str(user.subscription_plan) == "free"
     ):
         now_utc = datetime.now(timezone.utc)
         user.trial_starts_at = now_utc
         user.trial_ends_at   = now_utc + timedelta(days=15)
         trial_activated = True
-        log.info(
-            "Golden Trial activated",
-            user_id=str(user.id),
-            email=user.email,
-            trial_ends_at=user.trial_ends_at.isoformat(),
-        )
+        log.info("Golden Trial activated", user_id=str(user.id), email=user.email,
+                 trial_ends_at=user.trial_ends_at.isoformat())
 
     access_token      = create_access_token(str(user.id), extra={"role": user.role.value, "email": user.email})
     refresh_token_str = create_refresh_token(str(user.id))
