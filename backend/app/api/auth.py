@@ -456,27 +456,30 @@ async def login(
     db:      AsyncSession   = Depends(get_db),
     redis:   aioredis.Redis = Depends(get_redis),
 ):
-    # ⚠️ DEV BYPASS — skip all auth checks, return fake token
+    # ⚠️ DEV HARDCODED ACCOUNT — bypass DB for local testing
     # TODO: remove before going to production
-    return TokenResponse(
-        access_token  = "dev-bypass-access-token",
-        refresh_token = "dev-bypass-refresh-token",
-        user = {
-            "id":            "c2853f49-bca3-46fc-a755-9abd2d6e759f",
-            "email":         "ali_boss@natiqa.com",
-            "full_name":     "Ali Boss",
-            "role":          "super_admin",
-            "is_admin":      True,
-            "business_name": "Natiqa",
-            "totp_enabled":  False,
-            "trial": {
-                "active":         True,
-                "days_remaining": 15,
-                "ends_at":        None,
-                "just_activated": True,
+    _DEV_EMAIL    = "ali@natiqa.com"
+    _DEV_PASSWORD = "Alluosh2026"
+    if body.email.lower() == _DEV_EMAIL and body.password == _DEV_PASSWORD:
+        return TokenResponse(
+            access_token  = "dev-bypass-access-token",
+            refresh_token = "dev-bypass-refresh-token",
+            user = {
+                "id":            "c2853f49-bca3-46fc-a755-9abd2d6e759f",
+                "email":         _DEV_EMAIL,
+                "full_name":     "Ali",
+                "role":          "super_admin",
+                "is_admin":      True,
+                "business_name": "Natiqa",
+                "totp_enabled":  False,
+                "trial": {
+                    "active":         True,
+                    "days_remaining": 15,
+                    "ends_at":        None,
+                    "just_activated": True,
+                },
             },
-        },
-    )
+        )
 
     # ── Lookup user ──────────────────────────────────────────────────
     ip   = request.client.host if request.client else "unknown"
