@@ -1,4 +1,5 @@
 'use client'
+import dynamic from 'next/dynamic'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuthStore } from '@/lib/store'
@@ -183,7 +184,7 @@ const CSS = `
 `
 
 /* ══════════════ DASHBOARD ════════════════════════════════ */
-export default function Dashboard() {
+function Dashboard() {
   const { user, logout, permissions, isAdmin, isOrgAdmin, canAccessDept } = useAuthStore()
   const router = useRouter()
   const [view, setView] = useState('dash')
@@ -191,10 +192,8 @@ export default function Dashboard() {
   const [projs, setProjs] = useState<Project[]>([])
   const [clock, setClock] = useState(new Date())
   const [activeDept, setActiveDept] = useState<string | null>(null)
-  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    setMounted(true)
     if (!localStorage.getItem('access_token')) {
       router.push('/login')
     }
@@ -1153,3 +1152,5 @@ function TeamView() {
     </div>
   )
 }
+
+export default dynamic(() => Promise.resolve(Dashboard), { ssr: false })
