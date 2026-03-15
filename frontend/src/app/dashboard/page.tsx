@@ -194,8 +194,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     setTimeout(() => {
-      if (!localStorage.getItem('access_token')) router.push('/login')
-    }, 500)
+      const token = localStorage.getItem('access_token')
+      const user = useAuthStore.getState().user
+      if (!token || !user) router.push('/login')
+    }, 800)
   }, [router])
   useEffect(() => { const t = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(t) }, [])
 

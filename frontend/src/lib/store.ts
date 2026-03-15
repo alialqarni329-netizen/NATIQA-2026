@@ -45,7 +45,7 @@ const DEFAULT_PERMS: Permissions = {
 // ─── Super admin permissions (full access) ────────────────────────────
 const SUPER_ADMIN_PERMS: Permissions = {
   role: 'super_admin',
-  allowed_depts: ['general', 'hr', 'finance', 'legal', 'tech', 'operations'],
+  allowed_depts: ['financial', 'hr', 'legal', 'technical', 'admin', 'general'],
   can_upload: true,
   can_delete: true,
   can_admin: true,
