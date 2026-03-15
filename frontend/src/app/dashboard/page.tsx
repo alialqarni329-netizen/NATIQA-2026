@@ -195,10 +195,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     setMounted(true)
-    const token = localStorage.getItem('access_token')
-    if (!token) {
+    if (!localStorage.getItem('access_token')) {
       router.push('/login')
-      return
     }
   }, [router])
 
