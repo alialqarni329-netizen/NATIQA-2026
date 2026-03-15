@@ -196,8 +196,7 @@ export default function Dashboard() {
   useEffect(() => {
     setMounted(true)
     const token = localStorage.getItem('access_token')
-    const user = useAuthStore.getState().user
-    if (!token || !user) {
+    if (!token) {
       router.push('/login')
       return
     }
