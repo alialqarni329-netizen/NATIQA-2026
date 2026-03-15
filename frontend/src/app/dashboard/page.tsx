@@ -222,8 +222,6 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [permissions])
 
-  if (!mounted) return null
-
   const navItems = [
     { id: 'dash', icon: '▣', label: 'لوحة التحكم' },
     { id: 'chat', icon: '◉', label: 'المحادثة الذكية' },
@@ -238,6 +236,8 @@ export default function Dashboard() {
     if (id === 'admin') router.push('/admin/dashboard')
     else setView(id)
   }
+
+  if (!mounted) return null
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', fontFamily: "'Tajawal',Arial,sans-serif", direction: 'rtl', color: '#ccd9ef', background: '#060d1a' }}>
