@@ -52,11 +52,21 @@ export default function LoginPage() {
   const [need2fa, setNeed2fa] = useState(false)
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [clock, setClock] = useState(new Date())
+  // ✅ Fix: تجنب hydration error — نبدأ بـ null ونحدث بعد mount
+  const [clock, setClock] = useState<Date | null>(null)
+  const [year, setYear] = useState<number | null>(null)
   const totpRef = useRef<HTMLInputElement>(null)
 
   const { login } = useAuthStore()
   const router = useRouter()
+
+  // ✅ Fix: نشيل الـ clock من الـ SSR عشان يتطابق مع الـ client
+  useEffect(() => {
+    setClock(new Date())
+    setYear(new Date().getFullYear())
+    const t = setInterval(() => setClock(new Date()), 1000)
+    return () => clearInterval(t)
+  }, [])
 
   useEffect(() => {
     if (typeof window !== 'undefined' && localStorage.getItem('access_token'))
@@ -64,13 +74,13 @@ export default function LoginPage() {
   }, [router])
 
   useEffect(() => {
-    const t = setInterval(() => setClock(new Date()), 1000)
-    return () => clearInterval(t)
-  }, [])
-
-  useEffect(() => {
     if (need2fa) setTimeout(() => totpRef.current?.focus(), 80)
   }, [need2fa])
+
+  // ✅ Fix: صحح رابط الـ logo
+  const logoUrl = typeof window !== 'undefined'
+    ? `${(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/api$/, '')}/static/logo.png`
+    : ''
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -127,9 +137,8 @@ export default function LoginPage() {
 
         {/* Clock top-left */}
         <div style={{ position: 'absolute', top: 28, right: 32, fontFamily: "'JetBrains Mono'", fontSize: 11, color: '#1e3a5f', letterSpacing: '.06em' }}>
-          {clock.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-          &nbsp;·&nbsp;
-          {clock.toLocaleDateString('ar-SA', { weekday: 'short', day: 'numeric', month: 'short' })}
+          {clock ? clock.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}
+          {clock ? <>&nbsp;·&nbsp;{clock.toLocaleDateString('ar-SA', { weekday: 'short', day: 'numeric', month: 'short' })}</> : ''}
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 36, animation: 'fadeUp .7s .1s both' }}>
@@ -145,11 +154,14 @@ export default function LoginPage() {
               boxShadow: '0 0 40px rgba(59,130,246,.15), inset 0 0 20px rgba(59,130,246,.05)',
               animation: 'glowPulse 4s ease-in-out infinite',
             }}>
-              <img
-                src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/static/logo.png`.replace('/api/static', '/static')}
-                alt="Natiqa Logo"
-                style={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'drop-shadow(0 0 8px rgba(59,130,246,.5))' }}
-              />
+              {/* ✅ Fix: الصورة تظهر بس بعد mount عشان نتجنب hydration */}
+              {logoUrl && (
+                <img
+                  src={logoUrl}
+                  alt="Natiqa Logo"
+                  style={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'drop-shadow(0 0 8px rgba(59,130,246,.5))' }}
+                />
+              )}
             </div>
 
             {/* Lock badge */}
@@ -339,7 +351,7 @@ export default function LoginPage() {
 
           {/* Footer */}
           <div style={{ marginTop: 24, textAlign: 'center', fontSize: 10, color: '#1a2e47', fontFamily: "'JetBrains Mono'", letterSpacing: '.08em' }}>
-            NATIQA Enterprise · IAM v4.0 · {new Date().getFullYear()} ©
+            NATIQA Enterprise · IAM v4.0 · {year ?? ''} ©
           </div>
         </div>
       </div>
