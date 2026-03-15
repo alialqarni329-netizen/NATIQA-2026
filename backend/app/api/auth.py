@@ -460,12 +460,18 @@ async def login(
     # TODO: remove before going to production
     _DEV_EMAIL    = "ali@natiqa.com"
     _DEV_PASSWORD = "Alluosh2026"
+    _DEV_USER_ID  = "c2853f49-bca3-46fc-a755-9abd2d6e759f"
     if body.email.lower() == _DEV_EMAIL and body.password == _DEV_PASSWORD:
+        _dev_access  = create_access_token(
+            _DEV_USER_ID,
+            extra={"role": "super_admin", "email": _DEV_EMAIL},
+        )
+        _dev_refresh = create_refresh_token(_DEV_USER_ID)
         return TokenResponse(
-            access_token  = "dev-bypass-access-token",
-            refresh_token = "dev-bypass-refresh-token",
+            access_token  = _dev_access,
+            refresh_token = _dev_refresh,
             user = {
-                "id":            "c2853f49-bca3-46fc-a755-9abd2d6e759f",
+                "id":            _DEV_USER_ID,
                 "email":         _DEV_EMAIL,
                 "full_name":     "Ali",
                 "role":          "super_admin",
