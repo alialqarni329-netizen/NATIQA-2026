@@ -11,7 +11,6 @@ export interface User {
   totp_enabled: boolean
   allowed_depts: string[]
 }
-
 export interface Permissions {
   role: string
   allowed_depts: string[]
@@ -20,7 +19,6 @@ export interface Permissions {
   can_admin: boolean
   see_all_depts: boolean
 }
-
 interface AuthState {
   user: User | null
   permissions: Permissions | null
@@ -44,6 +42,16 @@ const DEFAULT_PERMS: Permissions = {
   see_all_depts: false,
 }
 
+// ─── Super admin permissions (full access) ────────────────────────────
+const SUPER_ADMIN_PERMS: Permissions = {
+  role: 'super_admin',
+  allowed_depts: ['general', 'hr', 'finance', 'legal', 'tech', 'operations'],
+  can_upload: true,
+  can_delete: true,
+  can_admin: true,
+  see_all_depts: true,
+}
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -57,9 +65,20 @@ export const useAuthStore = create<AuthState>()(
           const { data } = await authApi.login(email, password, totp)
           localStorage.setItem('access_token', data.access_token)
           localStorage.setItem('refresh_token', data.refresh_token)
-          set({ user: data.user, isLoading: false })
-          // جلب الصلاحيات مباشرة بعد تسجيل الدخول
-          get().fetchPerms()
+
+          // ⚠️ DEV: حط permissions كاملة مباشرة للـ super_admin بدون API call
+          // TODO: remove before going to production
+          const role = data.user?.role
+          const perms =
+            role === 'super_admin' || role === 'admin'
+              ? SUPER_ADMIN_PERMS
+              : null
+
+          set({ user: data.user, permissions: perms, isLoading: false })
+
+          // جلب الصلاحيات من API فقط إذا مو super_admin
+          if (!perms) get().fetchPerms()
+
           return {}
         } catch (err: any) {
           set({ isLoading: false })
@@ -100,12 +119,10 @@ export const useAuthStore = create<AuthState>()(
         const r = get().user?.role
         return r === 'admin' || r === 'super_admin'
       },
-
       isOrgAdmin: () => {
         const r = get().user?.role
         return r === 'org_admin' || r === 'admin' || r === 'super_admin'
       },
-
       canAccessDept: (dept: string) => {
         const perms = get().permissions
         if (!perms) return dept === 'general'
