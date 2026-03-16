@@ -193,7 +193,7 @@ function Dashboard() {
   const [clock, setClock] = useState(new Date())
   const [activeDept, setActiveDept] = useState<string | null>(null)
 
-  useEffect(() => { if (!localStorage.getItem('access_token')) router.push('/login') }, [router])
+  useEffect(() => { if (typeof window !== 'undefined' && !localStorage.getItem('access_token')) router.push('/login') }, [router])
   useEffect(() => { const t = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(t) }, [])
 
   const loadProjects = useCallback(async () => {
