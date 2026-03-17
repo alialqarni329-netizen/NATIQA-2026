@@ -65,20 +65,18 @@ export const useAuthStore = create<AuthState>()(
           const { data } = await authApi.login(email, password, totp)
           localStorage.setItem('access_token', data.access_token)
           localStorage.setItem('refresh_token', data.refresh_token)
-
-          // ⚠️ DEV: حط permissions كاملة مباشرة للـ super_admin بدون API call
-          // TODO: remove before going to production
           const role = data.user?.role
-          const perms =
-            role === 'super_admin' || role === 'admin'
-              ? SUPER_ADMIN_PERMS
-              : null
-
+          const superAdminPerms: Permissions = {
+            role: 'super_admin',
+            allowed_depts: ['financial', 'hr', 'legal', 'technical', 'admin', 'general'],
+            can_upload: true,
+            can_delete: true,
+            can_admin: true,
+            see_all_depts: true,
+          }
+          const perms = (role === 'super_admin' || role === 'admin') ? superAdminPerms : null
           set({ user: data.user, permissions: perms, isLoading: false })
-
-          // جلب الصلاحيات من API فقط إذا مو super_admin
           if (!perms) get().fetchPerms()
-
           return {}
         } catch (err: any) {
           set({ isLoading: false })
