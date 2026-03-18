@@ -23,6 +23,7 @@ interface AuthState {
   user: User | null
   permissions: Permissions | null
   isLoading: boolean
+  _hasHydrated: boolean
   login: (email: string, password: string, totp?: string) => Promise<{ require_2fa?: boolean }>
   logout: () => Promise<void>
   fetchMe: () => Promise<void>
@@ -58,6 +59,7 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       permissions: null,
       isLoading: false,
+      _hasHydrated: false,
 
       login: async (email, password, totp) => {
         set({ isLoading: true })
@@ -131,6 +133,14 @@ export const useAuthStore = create<AuthState>()(
     {
       name: 'natiqa-auth',
       partialize: (state) => ({ user: state.user, permissions: state.permissions }),
+      onRehydrateStorage: () => (state) => {
+        if (state) state._hasHydrated = true
+      },
     }
   )
 )
+
+// ─── Hook: انتظر حتى اكتمال الـ rehydration من localStorage ────────────
+export function useAuthHydrated() {
+  return useAuthStore((s) => s._hasHydrated)
+}

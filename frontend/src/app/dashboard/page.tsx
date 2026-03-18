@@ -2,7 +2,7 @@
 import dynamic from 'next/dynamic'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuthStore } from '@/lib/store'
+import { useAuthStore, useAuthHydrated } from '@/lib/store'
 import { dashApi, projectsApi, docsApi, chatApi, docStatusApi, autoOrganizerApi, orgApi } from '@/lib/api'
 import toast from 'react-hot-toast'
 import NotificationBell from '@/components/NotificationBell'
@@ -186,6 +186,7 @@ const CSS = `
 /* ══════════════ DASHBOARD ════════════════════════════════ */
 function Dashboard() {
   const { user, logout, permissions, isAdmin, isOrgAdmin, canAccessDept } = useAuthStore()
+  const hydrated = useAuthHydrated()
   const router = useRouter()
   const [view, setView] = useState('dash')
   const [proj, setProj] = useState<Project | null>(null)
@@ -194,6 +195,18 @@ function Dashboard() {
   const [activeDept, setActiveDept] = useState<string | null>(null)
 
   useEffect(() => { const t = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(t) }, [])
+
+  // انتظر حتى اكتمال الـ rehydration — بعدها تحقق من التوكن
+  useEffect(() => {
+    if (!hydrated) return
+    if (!localStorage.getItem('access_token')) router.replace('/login')
+  }, [hydrated, router])
+
+  if (!hydrated) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#060d1a' }}>
+      <div style={{ width: 40, height: 40, border: '3px solid rgba(59,130,246,.2)', borderTopColor: '#3b82f6', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+    </div>
+  )
 
   const loadProjects = useCallback(async () => {
     try { const { data } = await projectsApi.list(); setProjs(data); setProj(p => p ?? data[0] ?? null) } catch { }
