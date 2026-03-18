@@ -71,6 +71,7 @@ async def security_headers(request: Request, call_next):
     return response
 
 # CORSMiddleware must be OUTERMOST to wrap errors and security headers
+# Force deployment with universal CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
