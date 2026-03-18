@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuthStore } from '@/lib/store'
+import { useAuthStore, useAuthHydrated } from '@/lib/store'
 import toast from 'react-hot-toast'
 
 const Spin = () => (
