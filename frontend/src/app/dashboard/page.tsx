@@ -532,7 +532,7 @@ function ChatView({ proj, projs, setProj, activeDept, loadProjects }: any) {
     ])
     setUploading(true)
     try {
-      const { data } = await autoOrganizerApi.uploadInChat(file, convId || undefined)
+      const { data } = await autoOrganizerApi.uploadInChat(file, convId || undefined, proj?.id)
       if (!convId) setConvId(data.conversation_id)
 
       // If the backend returns 'processing', it means classification is happening in background

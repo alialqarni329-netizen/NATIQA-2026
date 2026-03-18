@@ -556,6 +556,7 @@ async def chat_upload(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     conversation_id: Optional[str] = Form(None),
+    project_id: Optional[str] = Form(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis),
@@ -590,16 +591,26 @@ async def chat_upload(
             detail=f"File too large (max {settings.MAX_FILE_SIZE_MB}MB)",
         )
 
-    # 3. Create a temporary "Processing" Project
-    project = Project(
-        name="جاري التصنيف...",
-        description="AI is analyzing and classifying your project...",
-        owner_id=user.id,
-        organization_id=user.organization_id,
-        status=ProjectStatus.PROCESSING
-    )
-    db.add(project)
-    await db.flush()
+    # 3. Project identification — use existing or create a new "Processing" one
+    project = None
+    if project_id:
+        try:
+            p_uuid = uuid.UUID(project_id)
+            res = await db.execute(select(Project).where(Project.id == p_uuid, Project.owner_id == user.id))
+            project = res.scalar_one_or_none()
+        except ValueError:
+            pass
+    
+    if not project:
+        project = Project(
+            name="جاري التصنيف...",
+            description="AI is analyzing and classifying your project...",
+            owner_id=user.id,
+            organization_id=user.organization_id,
+            status=ProjectStatus.PROCESSING
+        )
+        db.add(project)
+        await db.flush()
 
     file_hash = hashlib.sha256(file_bytes).hexdigest()
     
