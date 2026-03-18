@@ -60,19 +60,6 @@ app = FastAPI(
 # ─── Static Files (Logo, etc) ──────────────────────────────────────────
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
-# ─── Middleware ────────────────────────────────────────────────────────
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -82,6 +69,23 @@ async def security_headers(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     return response
+
+# CORSMiddleware must be OUTERMOST to wrap errors and security headers
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.exception_handler(404)
+async def custom_404_handler(request: Request, exc: HTTPException):
+    log.error("404 Error", path=request.url.path, method=request.method)
+    return JSONResponse(
+        status_code=404,
+        content={"detail": "رابط غير موجود أو غير صالح", "path": request.url.path},
+    )
 
 
 # ─── Routes ───────────────────────────────────────────────────────────

@@ -428,13 +428,18 @@ class ChatMessage(BaseModel):
 
 @router.post("/projects/{project_id}/chat")
 async def chat(
-    project_id: uuid.UUID,
+    project_id: str,
     body: ChatMessage,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis),
 ):
-    await _get_project(project_id, user, db)
+    try:
+        p_uuid = uuid.UUID(project_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="معرّف المشروع غير صالح")
+
+    await _get_project(p_uuid, user, db)
 
     # Get or create conversation
     conv_id = uuid.UUID(body.conversation_id) if body.conversation_id else None
