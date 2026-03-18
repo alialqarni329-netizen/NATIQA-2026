@@ -467,13 +467,6 @@ async def login(
             extra={"role": "super_admin", "email": _DEV_EMAIL},
         )
         _dev_refresh = create_refresh_token(_DEV_USER_ID)
-        rt_payload   = decode_token(_dev_refresh)
-        db.add(RefreshToken(
-            jti=rt_payload["jti"],
-            user_id=uuid.UUID(_DEV_USER_ID),
-            expires_at=datetime.fromtimestamp(rt_payload["exp"], tz=timezone.utc)
-        ))
-        await db.commit()
         return TokenResponse(
             access_token  = _dev_access,
             refresh_token = _dev_refresh,
@@ -599,6 +592,16 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     payload = decode_token(body.refresh_token)
     if not payload or payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    # ⚠️ DEV BYPASS for refresh
+    _DEV_USER_ID = "c2853f49-bca3-46fc-a755-9abd2d6e759f"
+    if payload["sub"] == _DEV_USER_ID:
+        new_access = create_access_token(payload["sub"], extra={"role": "super_admin", "email": "ali@natiqa.com"})
+        new_ref    = create_refresh_token(payload["sub"])
+        return TokenResponse(access_token=new_access, refresh_token=new_ref,
+            user={"id": payload["sub"], "email": "ali@natiqa.com", "full_name": "Ali",
+                  "role": "super_admin", "totp_enabled": False})
+
     rt = (await db.execute(select(RefreshToken).where(RefreshToken.jti == payload["jti"]))).scalar_one_or_none()
     if not rt or rt.revoked or rt.expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=401, detail="Refresh token expired or revoked")
