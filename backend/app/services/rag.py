@@ -4,6 +4,7 @@ RAG Service — Document Ingestion + Vector Search + LLM (via Factory)
 import io
 from pathlib import Path
 
+import asyncio
 import aiofiles
 import chromadb
 
@@ -110,10 +111,10 @@ async def ingest_document(
         batch = chunks[i: i + batch_size]
         ids = [f"{doc_id}_{i + j}" for j in range(len(batch))]
 
-        embeds = []
-        for chunk in batch:
-            resp = await llm.embed(chunk)
-            embeds.append(resp.embedding)
+        # Parallelize embedding calls
+        tasks = [llm.embed(chunk) for chunk in batch]
+        resps = await asyncio.gather(*tasks)
+        embeds = [r.embedding for r in resps]
 
         collection.add(
             ids=ids,

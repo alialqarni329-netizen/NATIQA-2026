@@ -66,7 +66,7 @@ class ClaudeAdapter(LLMBase):
         client = AsyncAnthropic(api_key=api_key)
 
         kwargs = {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": settings.CLAUDE_MODEL,
             "max_tokens": max_tokens,
             "temperature": temperature,
             "messages": [{"role": "user", "content": masked_prompt}],

@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     # ── LLM Provider ──────────────────────────────────────────
     LLM_PROVIDER:       str = "claude"
     CLAUDE_API_KEY:     str = ""
-    CLAUDE_MODEL:       str = "claude-sonnet-4-20250514"
+    CLAUDE_MODEL:       str = "claude-3-5-sonnet-20241022"
     OLLAMA_URL:         str = "http://ollama:11434"
     OLLAMA_MODEL:       str = "qwen2.5:7b"
     OLLAMA_EMBED_MODEL: str = "nomic-embed-text"
