@@ -467,6 +467,13 @@ async def login(
             extra={"role": "super_admin", "email": _DEV_EMAIL},
         )
         _dev_refresh = create_refresh_token(_DEV_USER_ID)
+        rt_payload   = decode_token(_dev_refresh)
+        db.add(RefreshToken(
+            jti=rt_payload["jti"],
+            user_id=uuid.UUID(_DEV_USER_ID),
+            expires_at=datetime.fromtimestamp(rt_payload["exp"], tz=timezone.utc)
+        ))
+        await db.commit()
         return TokenResponse(
             access_token  = _dev_access,
             refresh_token = _dev_refresh,

@@ -58,6 +58,7 @@ export default function LoginPage() {
   const totpRef = useRef<HTMLInputElement>(null)
 
   const { login } = useAuthStore()
+  const hydrated = useAuthHydrated()
   const router = useRouter()
 
   // ✅ Fix: نشيل الـ clock من الـ SSR عشان يتطابق مع الـ client
@@ -69,9 +70,9 @@ export default function LoginPage() {
   }, [])
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && localStorage.getItem('access_token'))
+    if (typeof window !== 'undefined' && hydrated && localStorage.getItem('access_token'))
       router.replace('/dashboard')
-  }, [router])
+  }, [router, hydrated])
 
   useEffect(() => {
     if (need2fa) setTimeout(() => totpRef.current?.focus(), 80)
