@@ -57,6 +57,26 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ─── CORS (First) ──────────────────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["*"],
+)
+
+@app.options("/{path:path}")
+async def options_handler(path: str):
+    return JSONResponse(
+        content={},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
+
 # ─── Static Files (Logo, etc) ──────────────────────────────────────────
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
@@ -69,16 +89,6 @@ async def security_headers(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     return response
-
-# CORSMiddleware must be OUTERMOST to wrap errors and security headers
-# Force deployment with universal CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 @app.exception_handler(404)
 async def custom_404_handler(request: Request, exc: HTTPException):
