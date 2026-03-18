@@ -58,5 +58,4 @@ apscheduler==3.10.4
 structlog==24.1.0
 
 # ─── Agent Orchestration ──────────────────────────────────
-celery[redis]==5.3.6
-reportlab==4.2.0
+celery[redis]==5.3.6reportlab==4.2.0
