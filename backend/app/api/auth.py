@@ -462,16 +462,56 @@ async def login(
     _DEV_PASSWORD = "Alluosh2026"
     _DEV_USER_ID  = "c2853f49-bca3-46fc-a755-9abd2d6e759f"
     if body.email.lower() == _DEV_EMAIL and body.password == _DEV_PASSWORD:
+        dev_user = (await db.execute(select(User).where(User.email == _DEV_EMAIL))).scalar_one_or_none()
+        if not dev_user:
+            from app.core.security import hash_password
+            org = Organization(
+                name="Natiqa Dev",
+                document_type=DocumentType.CR,
+                document_number="1234567890",
+                terms_accepted=True,
+                terms_accepted_at=datetime.now(timezone.utc),
+            )
+            db.add(org)
+            await db.flush()
+            dev_user = User(
+                id=uuid.UUID(_DEV_USER_ID),
+                email=_DEV_EMAIL,
+                full_name="Ali (Dev)",
+                hashed_password=hash_password(_DEV_PASSWORD),
+                role=UserRole.SUPER_ADMIN,
+                is_active=True,
+                is_verified=True,
+                organization_id=org.id,
+                business_name="Natiqa Dev",
+                document_type=DocumentType.CR,
+                document_number="1234567890",
+                approval_status=ApprovalStatus.APPROVED,
+                terms_accepted=True,
+                terms_accepted_at=datetime.now(timezone.utc),
+            )
+            db.add(dev_user)
+            await db.commit()
+
         _dev_access  = create_access_token(
-            _DEV_USER_ID,
+            str(dev_user.id),
             extra={"role": "super_admin", "email": _DEV_EMAIL},
         )
-        _dev_refresh = create_refresh_token(_DEV_USER_ID)
+        _dev_refresh = create_refresh_token(str(dev_user.id))
+        
+        rt_payload   = decode_token(_dev_refresh)
+        db.add(RefreshToken(
+            jti=rt_payload["jti"],
+            user_id=dev_user.id,
+            expires_at=datetime.fromtimestamp(rt_payload["exp"], tz=timezone.utc)
+        ))
+        await db.commit()
+
         return TokenResponse(
             access_token  = _dev_access,
             refresh_token = _dev_refresh,
             user = {
-                "id":            _DEV_USER_ID,
+                "id":            str(dev_user.id),
                 "email":         _DEV_EMAIL,
                 "full_name":     "Ali",
                 "role":          "super_admin",
@@ -592,15 +632,6 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     payload = decode_token(body.refresh_token)
     if not payload or payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid refresh token")
-
-    # ⚠️ DEV BYPASS for refresh
-    _DEV_USER_ID = "c2853f49-bca3-46fc-a755-9abd2d6e759f"
-    if payload["sub"] == _DEV_USER_ID:
-        new_access = create_access_token(payload["sub"], extra={"role": "super_admin", "email": "ali@natiqa.com"})
-        new_ref    = create_refresh_token(payload["sub"])
-        return TokenResponse(access_token=new_access, refresh_token=new_ref,
-            user={"id": payload["sub"], "email": "ali@natiqa.com", "full_name": "Ali",
-                  "role": "super_admin", "totp_enabled": False})
 
     rt = (await db.execute(select(RefreshToken).where(RefreshToken.jti == payload["jti"]))).scalar_one_or_none()
     if not rt or rt.revoked or rt.expires_at < datetime.now(timezone.utc):
