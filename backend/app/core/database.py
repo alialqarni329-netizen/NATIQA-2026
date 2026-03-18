@@ -2,6 +2,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.pool import NullPool  # type: ignore
 from app.core.config import settings  # type: ignore
 from app.models.models import Base  # type: ignore
+from datetime import datetime, timezone
 import structlog  # type: ignore
 
 log = structlog.get_logger()
@@ -44,27 +45,83 @@ async def init_db():
 
 
 async def seed_admin():
-    """Create first admin if not exists."""
-    from app.models.models import User, UserRole  # type: ignore
-    from app.core.security import hash_password  # type: ignore
-    from sqlalchemy import select  # type: ignore
+    """Create a default organization and seed the first admin and dev users if they don't exist."""
+    from app.models.models import (
+        User, UserRole, Organization, DocumentType, 
+        ApprovalStatus, SubscriptionPlan
+    )
+    from app.core.security import hash_password
+    from sqlalchemy import select
+    import uuid as _uuid
 
     async with AsyncSessionLocal() as session:
-        existing = await session.execute(
+        # 1. Ensure a Default Organization exists
+        org_result = await session.execute(
+            select(Organization).where(Organization.name == "Natiqa Default")
+        )
+        org = org_result.scalar_one_or_none()
+        
+        if not org:
+            org = Organization(
+                name="Natiqa Default",
+                tax_number="DEV-123456789",
+                document_type=DocumentType.CR,
+                subscription_plan=SubscriptionPlan.ENTERPRISE, # Enterprise for Dev
+                is_active=True,
+                terms_accepted=True,
+                terms_accepted_at=datetime.now(timezone.utc)
+            )
+            session.add(org)
+            await session.flush()
+            log.info("Default Organization created", org_id=str(org.id))
+        else:
+            # Ensure it has a plan for dev
+            if not org.subscription_plan:
+                org.subscription_plan = SubscriptionPlan.ENTERPRISE
+            await session.flush()
+
+        # 2. Seed First Admin
+        existing_admin = await session.execute(
             select(User).where(User.email == settings.FIRST_ADMIN_EMAIL)
         )
-        if existing.scalar_one_or_none():
-            return
+        if not existing_admin.scalar_one_or_none():
+            admin = User(
+                email=settings.FIRST_ADMIN_EMAIL,
+                full_name=settings.FIRST_ADMIN_NAME,
+                hashed_password=hash_password(settings.FIRST_ADMIN_PASSWORD),
+                role=UserRole.SUPER_ADMIN,
+                is_active=True,
+                is_verified=True,
+                organization_id=org.id,
+                approval_status=ApprovalStatus.APPROVED,
+                terms_accepted=True,
+                terms_accepted_at=datetime.now(timezone.utc)
+            )
+            session.add(admin)
+            log.info("Admin user created", email=settings.FIRST_ADMIN_EMAIL)
 
-        from app.models.models import ApprovalStatus
-        admin = User(
-            email=settings.FIRST_ADMIN_EMAIL,
-            full_name=settings.FIRST_ADMIN_NAME,
-            hashed_password=hash_password(settings.FIRST_ADMIN_PASSWORD),
-            role=UserRole.SUPER_ADMIN,
-            is_active=True,
-            is_verified=True,
+        # 3. Seed Dev User (with fixed UUID requested by frontend/store)
+        _DEV_EMAIL = "ali@natiqa.com"
+        _DEV_UUID = _uuid.UUID("c2853f49-bca3-46fc-a755-9abd2d6e759f")
+        existing_dev = await session.execute(
+            select(User).where(User.email == _DEV_EMAIL)
         )
-        session.add(admin)
+        if not existing_dev.scalar_one_or_none():
+            dev = User(
+                id=_DEV_UUID,
+                email=_DEV_EMAIL,
+                full_name="Ali (Dev)",
+                hashed_password=hash_password("Alluosh2026"),
+                role=UserRole.SUPER_ADMIN,
+                is_active=True,
+                is_verified=True,
+                organization_id=org.id,
+                approval_status=ApprovalStatus.APPROVED,
+                terms_accepted=True,
+                terms_accepted_at=datetime.now(timezone.utc),
+                referral_code="DEV-ALI-FIXED"
+            )
+            session.add(dev)
+            log.info("Dev user seeded with fixed UUID", email=_DEV_EMAIL)
+
         await session.commit()
-        log.info("Admin user created", email=settings.FIRST_ADMIN_EMAIL)
