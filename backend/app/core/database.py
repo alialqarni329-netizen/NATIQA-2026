@@ -100,13 +100,25 @@ async def seed_admin():
             session.add(admin)
             log.info("Admin user created", email=settings.FIRST_ADMIN_EMAIL)
 
-        # 3. Seed Dev User (with fixed UUID requested by frontend/store)
+        # 3. Seed Dev User (force the fixed UUID)
         _DEV_EMAIL = "ali@natiqa.com"
         _DEV_UUID = _uuid.UUID("c2853f49-bca3-46fc-a755-9abd2d6e759f")
-        existing_dev = await session.execute(
-            select(User).where(User.email == _DEV_EMAIL)
-        )
-        if not existing_dev.scalar_one_or_none():
+        
+        # Check if user with this UUID exists
+        dev_by_id = await session.get(User, _DEV_UUID)
+        
+        if not dev_by_id:
+            # Check if email is taken by another ID
+            existing_dev_by_email = await session.execute(
+                select(User).where(User.email == _DEV_EMAIL)
+            )
+            old_dev = existing_dev_by_email.scalar_one_or_none()
+            if old_dev:
+                log.info("Deleting dev user with incorrect UUID", email=_DEV_EMAIL, old_id=str(old_dev.id))
+                await session.delete(old_dev)
+                await session.flush()
+            
+            # Create fresh with the correct ID
             dev = User(
                 id=_DEV_UUID,
                 email=_DEV_EMAIL,
@@ -123,5 +135,12 @@ async def seed_admin():
             )
             session.add(dev)
             log.info("Dev user seeded with fixed UUID", email=_DEV_EMAIL)
+        else:
+            # Ensure it's active and linked to correct org
+            dev_by_id.is_active = True
+            dev_by_id.is_verified = True
+            dev_by_id.approval_status = ApprovalStatus.APPROVED
+            dev_by_id.organization_id = org.id
+            log.info("Dev user already exists with correct UUID, updated status", email=_DEV_EMAIL)
 
         await session.commit()
