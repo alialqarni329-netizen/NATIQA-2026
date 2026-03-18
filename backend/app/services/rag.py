@@ -158,13 +158,6 @@ async def query_rag(
 
     collection = get_collection(project_id)
     n = collection.count()
-    if n == 0:
-        return {
-            "answer": "قاعدة المعرفة فارغة. يرجى رفع ملفات أولاً.",
-            "sources": [],
-            "tokens": 0,
-            "response_time_ms": int((time.time() - start) * 1000),
-        }
 
     results = collection.query(
         query_embeddings=[q_embed],
@@ -172,45 +165,39 @@ async def query_rag(
         include=["documents", "metadatas", "distances"],
     )
 
-    if not results["documents"] or not results["documents"][0]:
-        return {
-            "answer": "لم أجد معلومات كافية في قاعدة المعرفة للإجابة.",
-            "sources": [],
-            "tokens": 0,
-            "response_time_ms": int((time.time() - start) * 1000),
-        }
-
-    docs      = results["documents"][0]
-    metas     = results["metadatas"][0]
-    distances = results["distances"][0]
-
-    context_parts = []
     sources = []
-    seen: set = set()
+    if not results["documents"] or not results["documents"][0]:
+        context = "No relevant context found. Use general knowledge."
+    else:
+        context_parts = []
+        seen: set = set()
+        docs = results["documents"][0]
+        metas = results["metadatas"][0]
+        distances = results["distances"][0]
 
-    for doc, meta, dist in zip(docs, metas, distances):
-        fname = meta.get("filename", "مجهول")
-        dept  = meta.get("department", "")
-        context_parts.append(f"[المصدر: {fname}]\n{doc}")
-        if fname not in seen:
-            seen.add(fname)
-            sources.append({
-                "filename":   fname,
-                "department": dept,
-                "relevance":  round(1 - dist, 3),
-            })
+        for doc, meta, dist in zip(docs, metas, distances):
+            fname = meta.get("filename", "مجهول")
+            dept = meta.get("department", "")
+            context_parts.append(f"[المصدر: {fname}]\n{doc}")
+            if fname not in seen:
+                seen.add(fname)
+                sources.append({
+                    "filename": fname,
+                    "department": dept,
+                    "relevance": round(1 - dist, 3),
+                })
+        context = "\n\n---\n\n".join(context_parts)
 
-    context = "\n\n---\n\n".join(context_parts)
+    system_prompt = f"""
+أنت مساعد ذكاء اصطناعي محترف للنظام السعودي "ناطقة" (Natiqa).
+ساعد المستخدم بناءً على السياق أدناه. إذا لم تجد الإجابة، استخدم معلوماتك العامة مع التنويه بذلك.
 
-    system_prompt = (
-        "أنت مساعد تحليل بيانات ذكي لمنصة ناطقة المؤسسية. "
-        "أجب بالعربية بشكل دقيق ومفصّل بناءً على المعلومات المقدمة فقط. "
-        "إذا كانت المعلومات غير كافية، قل ذلك بوضوح."
-    )
+السياق:
+{context}
+    """
 
     prompt = (
-        f"المعلومات المتاحة:\n\n{context}\n\n"
-        f"---\n\nالسؤال: {question}\n\n"
+        f"السؤال: {question}\n\n"
         f"أجب بشكل مباشر ودقيق واستشهد بالأرقام."
     )
 

@@ -73,13 +73,13 @@ async def query_rag_scoped(
     collection = get_collection(project_id)
     n          = collection.count()
 
-    if n == 0:
-        return {
-            "answer": "قاعدة المعرفة فارغة. يرجى رفع ملفات أولاً.",
-            "sources": [], "tokens": 0,
-            "response_time_ms": int((time.time() - start) * 1000),
-            "dept_filter_applied": allowed,
-        }
+    # if n == 0:
+    #     return {
+    #         "answer": "قاعدة المعرفة فارغة. يرجى رفع ملفات أولاً.",
+    #         "sources": [], "tokens": 0,
+    #         "response_time_ms": int((time.time() - start) * 1000),
+    #         "dept_filter_applied": allowed,
+    #     }
 
     query_kwargs = dict(
         query_embeddings=[q_embed],
@@ -113,41 +113,38 @@ async def query_rag_scoped(
             results["metadatas"][0]  = fm[:top_k]
             results["distances"][0]  = fdist[:top_k]
 
-    if not results["documents"] or not results["documents"][0]:
-        dept_names = ", ".join(allowed) if allowed else "جميع الأقسام"
-        return {
-            "answer": f"لم أجد معلومات ذات صلة في الأقسام المتاحة لك: {dept_names}.",
-            "sources": [], "tokens": 0,
-            "response_time_ms": int((time.time() - start) * 1000),
-            "dept_filter_applied": allowed,
-        }
-
-    # ── 3. Build context ──────────────────────────────────────────────
-    raw_docs  = results["documents"][0]
-    metas     = results["metadatas"][0]
-    distances = results["distances"][0]
-
     context_parts: list[str] = []
     sources: list[dict]      = []
-    seen: set                = set()
 
-    for doc_text, meta, dist in zip(raw_docs, metas, distances):
-        doc_id = meta.get("doc_id", "")
-        if doc_id in seen:
-            continue
-        seen.add(doc_id)
-        dept = meta.get("department", "general")
-        context_parts.append(
-            f"[المصدر: {meta.get('filename','ملف')} | القسم: {dept}]\n{doc_text}"
-        )
-        sources.append({
-            "doc_id":     doc_id,
-            "filename":   meta.get("filename", "ملف"),
-            "department": dept,
-            "relevance":  round(1 - float(dist), 3),
-        })
+    if not results["documents"] or not results["documents"][0]:
+        log.info("No relevant documents found in ChromaDB")
+        # continue to prompt anyway
+        context = "No relevant context found in the project's documents. Use your general knowledge."
+    else:
+        # ── 3. Build context ──────────────────────────────────────────────
+        raw_docs  = results["documents"][0]
+        metas     = results["metadatas"][0]
+        distances = results["distances"][0]
 
-    context = "\n\n---\n\n".join(context_parts)
+        seen: set                = set()
+
+        for doc_text, meta, dist in zip(raw_docs, metas, distances):
+            doc_id = meta.get("doc_id", "")
+            if doc_id in seen:
+                continue
+            seen.add(doc_id)
+            dept = meta.get("department", "general")
+            context_parts.append(
+                f"[المصدر: {meta.get('filename','ملف')} | القسم: {dept}]\n{doc_text}"
+            )
+            sources.append({
+                "doc_id":     doc_id,
+                "filename":   meta.get("filename", "ملف"),
+                "department": dept,
+                "relevance":  round(1 - float(dist), 3),
+            })
+
+        context = "\n\n---\n\n".join(context_parts)
 
     # ── 4. Mask → LLM → Unmask ───────────────────────────────────────
     mask_ctx      = mask_sensitive_data(context)
@@ -159,15 +156,22 @@ async def query_rag_scoped(
 
     dept_info = f"الأقسام المتاحة: {', '.join(allowed)}" if allowed else "جميع الأقسام"
 
-    system_prompt = (
-        "You are Natiqa (ناطقة), the premier Saudi AI Business Analyst. "
-        "Use Saudi business terminology. Be precise, helpful, and professional. "
-        "If the answer is not in the uploaded documents, tell the user politely."
-    )
+    system_prompt = f"""
+أنت مساعد ذكاء اصطناعي محترف للنظام السعودي "ناطقة" (Natiqa).
+مسؤوليتك هي مساعدة المستخدمين في تحليل الوثائق والبيانات بناءً على المعرفة المتوفرة في المشروع.
+
+إرشادات العمل:
+1. استخدم المعلومات المزودة في "السياق" أدناه للإجابة على سؤال المستخدم بدقة.
+2. إذا لم تجد الإجابة في السياق المزود، يمكنك الإجابة بناءً على معلوماتك العامة كخبير في الأنظمة السعودية، ولكن يجب أن توضح للمستخدم أنك تستخدم معلوماتك العامة لعدم توفر تفاصيل كافية في المستندات المرفوعة حالياً.
+3. التزم دائماً بلهجة مهنية رسمية باللغة العربية.
+4. إذا كان السؤال خارج نطاق العمل أو الأنظمة، اعتذر بلباقة وركز على دورك كخبير "ناطقة".
+
+السياق (الوثائق المرفوعة):
+{masked_context}
+    """
 
     prompt = (
         f"{dept_info}\n\n"
-        f"المعلومات المتاحة:\n\n{masked_context}\n\n"
         f"السؤال: {masked_question}\n\n"
         f"الإجابة (باللغة العربية):"
     )
