@@ -686,6 +686,37 @@ function ChatView({ proj, projs, setProj, activeDept, loadProjects }: any) {
                         ? <ReportCard content={m.content} type={ctype} />
                         : <div className="prose-ar"><ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown></div>
                   }
+                  {!isU && m.content !== '__loading__' && (
+                    <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+                      {[
+                        { type: 'docx', label: '📄 Word', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+                        { type: 'xlsx', label: '📊 Excel', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+                        { type: 'pdf', label: '📑 PDF', mime: 'application/pdf' },
+                        { type: 'csv', label: '📋 CSV', mime: 'text/csv' },
+                      ].map(f => (
+                        <button key={f.type} onClick={async () => {
+                          try {
+                            const token = localStorage.getItem('access_token')
+                            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/projects/${proj?.id}/generate-file`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                              body: JSON.stringify({ content: m.content, file_type: f.type, filename: `natiqa-${Date.now()}.${f.type}` })
+                            })
+                            const blob = await res.blob()
+                            const url = URL.createObjectURL(blob)
+                            const a = document.createElement('a')
+                            a.href = url
+                            a.download = `natiqa-${Date.now()}.${f.type}`
+                            a.click()
+                          } catch { toast.error('فشل تحميل الملف') }
+                        }}
+                        style={{ padding: '3px 10px', background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 6, fontSize: 11, color: '#8e8ea0', cursor: 'pointer', fontFamily: 'Tajawal', transition: 'all .15s' }}
+                        onMouseOver={e => { e.currentTarget.style.borderColor = '#444'; e.currentTarget.style.color = '#ccc' }}
+                        onMouseOut={e => { e.currentTarget.style.borderColor = '#2a2a2a'; e.currentTarget.style.color = '#8e8ea0' }}
+                        >{f.label}</button>
+                      ))}
+                    </div>
+                  )}
                   {m.sources && m.sources.length > 0 && (
                     <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(59,130,246,.12)', padding: isCard ? '8px 2px 0' : '8px 0 0' }}>
                       <div style={{ fontSize: 10, color: '#3a5472', marginBottom: 5 }}>المصادر:</div>
