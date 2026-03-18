@@ -29,6 +29,12 @@ api.interceptors.response.use(
   (res) => res,
   async (error: AxiosError) => {
     const original = error.config as any
+
+    // تجاهل أخطاء الـ refresh endpoint نفسه لتجنب infinite loop
+    if (original?.url?.includes('/auth/refresh')) {
+      return Promise.reject(error)
+    }
+
     if (error.response?.status === 401 && !original._retry) {
       if (isRefreshing) {
         return new Promise((resolve) => {
@@ -51,8 +57,13 @@ api.interceptors.response.use(
         original.headers.Authorization = `Bearer ${data.access_token}`
         return api(original)
       } catch {
-        localStorage.clear()
-        window.location.href = '/login'
+        // احذف التوكنات فقط — بدون مسح كل localStorage
+        localStorage.removeItem('access_token')
+        localStorage.removeItem('refresh_token')
+        // أعد للـ login فقط إذا لم نكن هناك بالفعل
+        if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
+          window.location.href = '/login'
+        }
       } finally {
         isRefreshing = false
       }
