@@ -468,7 +468,7 @@ async def login(
             org = Organization(
                 name="Natiqa Dev",
                 document_type=DocumentType.CR,
-                tax_number="1234567890",
+                tax_number=f"DEV-{uuid.uuid4().hex[:12]}",
                 terms_accepted=True,
                 terms_accepted_at=datetime.now(timezone.utc),
             )
