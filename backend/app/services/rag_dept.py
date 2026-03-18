@@ -81,9 +81,10 @@ async def query_rag_scoped(
     #         "dept_filter_applied": allowed,
     #     }
 
+    n_results = max(1, min(top_k, n))
     query_kwargs = dict(
         query_embeddings=[q_embed],
-        n_results=min(top_k, n),
+        n_results=n_results,
         include=["documents", "metadatas", "distances"],
     )
     if where_filter:
@@ -93,9 +94,10 @@ async def query_rag_scoped(
         results = collection.query(**query_kwargs)
     except Exception as e:
         log.warning("ChromaDB where-filter failed, falling back", error=str(e))
+        n_results_fallback = max(1, min(top_k * 3, n))
         results = collection.query(
             query_embeddings=[q_embed],
-            n_results=min(top_k * 3, n),
+            n_results=n_results_fallback,
             include=["documents", "metadatas", "distances"],
         )
         if results["documents"] and allowed:
