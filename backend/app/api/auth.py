@@ -576,15 +576,16 @@ async def login(
     trial_activated = False
     if (
         user.approval_status == ApprovalStatus.APPROVED
-        and user.trial_starts_at is None
-        and str(user.subscription_plan) == "free"
+        and getattr(user, "organization", None) is not None
+        and user.organization.trial_starts_at is None
+        and str(user.organization.subscription_plan) == "SubscriptionPlan.FREE"
     ):
         now_utc = datetime.now(timezone.utc)
-        user.trial_starts_at = now_utc
-        user.trial_ends_at   = now_utc + timedelta(days=15)
+        user.organization.trial_starts_at = now_utc
+        user.organization.trial_ends_at   = now_utc + timedelta(days=15)
         trial_activated = True
         log.info("Golden Trial activated", user_id=str(user.id), email=user.email,
-                 trial_ends_at=user.trial_ends_at.isoformat())
+                 trial_ends_at=user.organization.trial_ends_at.isoformat())
 
     access_token      = create_access_token(str(user.id), extra={"role": user.role.value, "email": user.email})
     refresh_token_str = create_refresh_token(str(user.id))
@@ -594,7 +595,7 @@ async def login(
     await db.commit()
     if trial_activated:
         await log_audit(db, AuditAction.TRIAL_ACTIVATE, user_id=user.id, ip_address=ip,
-                        details={"trial_ends_at": user.trial_ends_at.isoformat()})
+                        details={"trial_ends_at": user.organization.trial_ends_at.isoformat()})
     await log_audit(db, AuditAction.LOGIN, user_id=user.id, ip_address=ip)
     await db.commit()
 
@@ -604,7 +605,7 @@ async def login(
     trial_info = {
         "active":         in_trial,
         "days_remaining": trial_days_remaining(user) if in_trial else 0,
-        "ends_at":        user.trial_ends_at.isoformat() if user.trial_ends_at else None,
+        "ends_at":        user.organization.trial_ends_at.isoformat() if (getattr(user, "organization", None) and user.organization.trial_ends_at) else None,
         "just_activated": trial_activated,
     }
 

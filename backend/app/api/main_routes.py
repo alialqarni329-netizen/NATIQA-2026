@@ -262,7 +262,7 @@ async def upload_document(
     # ── Subscription enforcement (upload) ────────────────────────────
     from app.services.plans import get_effective_plan
     plan_enum, _ = get_effective_plan(user)
-    custom = getattr(user, "subscription_custom_limits", None)
+    custom = getattr(user.organization, "subscription_custom_limits", None) if getattr(user, "organization", None) else None
     await UsageTracker.check_upload(
         user_id=str(user.id),
         file_size_bytes=len(file_bytes),
@@ -462,7 +462,7 @@ async def chat(
     # ── Subscription enforcement (AI query) ─────────────────────────
     from app.services.plans import get_effective_plan
     plan_enum, _ = get_effective_plan(user)
-    custom = getattr(user, "subscription_custom_limits", None)
+    custom = getattr(user.organization, "subscription_custom_limits", None) if getattr(user, "organization", None) else None
     await UsageTracker.check_ai_query(
         user_id=str(user.id),
         plan=plan_enum,
@@ -575,7 +575,7 @@ async def chat_upload(
 
     # 2. Quota enforcement
     plan_enum, _ = get_effective_plan(user)
-    custom = getattr(user, "subscription_custom_limits", None)
+    custom = getattr(user.organization, "subscription_custom_limits", None) if getattr(user, "organization", None) else None
     await UsageTracker.check_upload(
         user_id=str(user.id),
         file_size_bytes=len(file_bytes),

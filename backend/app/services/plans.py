@@ -153,12 +153,14 @@ def is_in_trial_period(user) -> bool:
     Returns True when the user currently has an active Golden Trial.
     Pure Python — no DB/Redis access. Safe to call everywhere.
     """
-    if user.trial_starts_at is None or user.trial_ends_at is None:
+    if not getattr(user, "organization", None):
+        return False
+    if user.organization.trial_starts_at is None or user.organization.trial_ends_at is None:
         return False
     now = datetime.now(timezone.utc)
     # Ensure timezone-aware comparison
-    starts = user.trial_starts_at
-    ends   = user.trial_ends_at
+    starts = user.organization.trial_starts_at
+    ends   = user.organization.trial_ends_at
     if starts.tzinfo is None:
         from datetime import timezone as _tz
         starts = starts.replace(tzinfo=_tz.utc)
@@ -175,7 +177,9 @@ def trial_days_remaining(user) -> int:
     """
     if not is_in_trial_period(user):
         return 0
-    ends = user.trial_ends_at
+    if not getattr(user, "organization", None):
+        return 0
+    ends = user.organization.trial_ends_at
     if ends.tzinfo is None:
         ends = ends.replace(tzinfo=timezone.utc)
     delta = ends - datetime.now(timezone.utc)
@@ -188,18 +192,26 @@ def get_effective_plan(user) -> tuple[SubscriptionPlan, PlanLimits]:
 
     Priority (highest → lowest):
       1. Active Golden Trial  →  PRO limits (TRIAL_PLAN)
-      2. Paid subscription    →  user.subscription_plan
+      2. Paid subscription    →  user.organization.subscription_plan
       3. Default              →  FREE
 
     Usage:
         plan_enum, limits = get_effective_plan(user)
         await UsageTracker.check_upload(user_id, size, plan_enum, db, redis,
-                                        custom_limits=user.subscription_custom_limits)
+                                        custom_limits=user.organization.subscription_custom_limits)
     """
     if is_in_trial_period(user):
         return SubscriptionPlan.PRO, TRIAL_PLAN
 
-    plan_str = user.subscription_plan or "FREE"
+    if not getattr(user, "organization", None):
+        return SubscriptionPlan.FREE, get_plan(SubscriptionPlan.FREE)
+
+    plan_val = user.organization.subscription_plan
+    if hasattr(plan_val, "value"):
+        plan_str = plan_val.value
+    else:
+        plan_str = str(plan_val) if plan_val else "FREE"
+
     plan_enum = SubscriptionPlan(plan_str.upper())
     return plan_enum, get_plan(plan_enum)
 

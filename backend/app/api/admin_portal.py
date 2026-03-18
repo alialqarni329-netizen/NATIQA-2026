@@ -40,8 +40,9 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_user, get_redis, log_audit
 from app.models.models import (
     ApprovalStatus, AuditAction, AuditLog, Document,
-    Message, Project, SubscriptionPlan, User, UserRole,
+    Message, Organization, Project, SubscriptionPlan, User, UserRole,
 )
+from sqlalchemy.orm import selectinload
 from app.services.plans import UsageTracker, get_plan, PLANS, UNLIMITED
 
 log = structlog.get_logger()
@@ -96,8 +97,10 @@ async def platform_stats(
 
     # Plan breakdown
     plan_rows = await db.execute(
-        select(User.subscription_plan, func.count().label("cnt"))
-        .group_by(User.subscription_plan)
+        select(Organization.subscription_plan, func.count().label("cnt"))
+        .select_from(User)
+        .join(Organization, User.organization_id == Organization.id, isouter=True)
+        .group_by(Organization.subscription_plan)
     )
     plans = {r.subscription_plan: r.cnt for r in plan_rows}
 
@@ -156,7 +159,7 @@ async def list_users(
     db:       AsyncSession = Depends(get_db),
 ):
     """Paginated user list with filters. Used by the admin table."""
-    q = select(User).order_by(User.created_at.desc())
+    q = select(User).options(selectinload(User.organization)).order_by(User.created_at.desc())
 
     if status:
         try:
@@ -166,7 +169,7 @@ async def list_users(
 
     if plan:
         try:
-            q = q.where(User.subscription_plan == SubscriptionPlan(plan))
+            q = q.outerjoin(Organization, User.organization_id == Organization.id).where(Organization.subscription_plan == SubscriptionPlan(plan))
         except ValueError:
             pass
 
@@ -275,13 +278,14 @@ async def change_plan(
     redis:   aioredis.Redis = Depends(get_redis),
 ):
     user     = await _get_target_user(user_id, db)
-    old_plan = user.subscription_plan
+    old_plan = getattr(user.organization, "subscription_plan", "FREE") if getattr(user, "organization", None) else "FREE"
 
-    user.subscription_plan          = body.plan
-    user.subscription_custom_limits = body.custom_limits
-    user.subscription_expires_at    = (
-        datetime.fromisoformat(body.expires_at) if body.expires_at else None
-    )
+    if getattr(user, "organization", None):
+        user.organization.subscription_plan          = body.plan
+        user.organization.subscription_custom_limits = body.custom_limits
+        user.organization.subscription_expires_at    = (
+            datetime.fromisoformat(body.expires_at) if body.expires_at else None
+        )
 
     action = (
         AuditAction.PLAN_UPGRADE
@@ -346,11 +350,13 @@ async def marketing_stats(
             func.count().label("total_referrals"),
             func.sum(
                 func.cast(
-                    User.subscription_plan == "pro",
+                    Organization.subscription_plan == "pro",
                     type_=__import__("sqlalchemy").Integer
                 )
             ).label("pro_referrals"),
         )
+        .select_from(User)
+        .outerjoin(Organization, User.organization_id == Organization.id)
         .where(User.referred_by.isnot(None))
         .group_by(User.referred_by)
         .order_by(text("total_referrals DESC"))
@@ -405,13 +411,15 @@ async def user_usage(
     redis:   aioredis.Redis = Depends(get_redis),
 ):
     user = await _get_target_user(user_id, db)
-    plan = SubscriptionPlan(user.subscription_plan or "free")
+    plan_str = user.organization.subscription_plan if getattr(user, "organization", None) else "free"
+    plan = SubscriptionPlan(str(plan_str) if isinstance(plan_str, str) else plan_str.value)
+    
     summary = await UsageTracker.get_usage_summary(
         user_id=str(user_id),
         plan=plan,
         db=db,
         redis=redis,
-        custom_limits=user.subscription_custom_limits,
+        custom_limits=user.organization.subscription_custom_limits if getattr(user, "organization", None) else None,
     )
     return {"user": _serialize_user(user), "usage": summary}
 
@@ -419,7 +427,7 @@ async def user_usage(
 # ── Helpers ───────────────────────────────────────────────────────────
 
 async def _get_target_user(user_id: uuid.UUID, db: AsyncSession) -> User:
-    u = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    u = (await db.execute(select(User).options(selectinload(User.organization)).where(User.id == user_id))).scalar_one_or_none()
     if not u:
         raise HTTPException(status_code=404, detail="User not found.")
     return u
@@ -448,9 +456,9 @@ def _serialize_user(u: User) -> dict:
         "is_verified":        u.is_verified,
         "approval_status":    u.approval_status.value,
         "rejection_reason":   u.rejection_reason,
-        "subscription_plan":  str(u.subscription_plan or "free"),
-        "subscription_expires_at": u.subscription_expires_at.isoformat()
-                                   if u.subscription_expires_at else None,
+        "subscription_plan":  str(u.organization.subscription_plan.value if (getattr(u, "organization", None) and getattr(u.organization, "subscription_plan", None) and hasattr(u.organization.subscription_plan, "value")) else u.organization.subscription_plan if (getattr(u, "organization", None) and getattr(u.organization, "subscription_plan", None)) else "free"),
+        "subscription_expires_at": u.organization.subscription_expires_at.isoformat()
+                                   if getattr(u, "organization", None) and u.organization.subscription_expires_at else None,
         "last_login":         u.last_login.isoformat() if u.last_login else None,
         "created_at":         u.created_at.isoformat(),
     }
