@@ -57,51 +57,48 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ─── CORS (Comprehensive Resolution) ──────────────────────────────────
-@app.middleware("http")
-async def comprehensive_cors_middleware(request: Request, call_next):
+# ─── CORS ──────────────────────────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://frontend-production-043cd.up.railway.app",
+        "https://frontend-production-043cd.up.railway.app/",
+        "http://localhost:3000",
+        "http://localhost:3000/",
+        "https://natiqa.ai",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
+
+# ─── Exception Handlers with CORS support ──────────────────────────────
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    response = JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=exc.headers
+    )
     origin = request.headers.get("origin")
-    
-    # 1. Handle Preflight OPTIONS
-    if request.method == "OPTIONS":
-        response = JSONResponse(content={"message": "CORS Preflight OK"})
-        if origin:
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Access-Control-Allow-Credentials"] = "true"
-            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-            response.headers["Access-Control-Allow-Headers"] = "*"
-        return response
-
-    # 2. Process Request
-    try:
-        response = await call_next(request)
-    except Exception as e:
-        log.error("CORS Middleware: Request Failed", error=str(e))
-        response = JSONResponse(
-            status_code=500,
-            content={"detail": "Internal Server Error during CORS processing"}
-        )
-
-    # 3. Add CORS Headers to Response
     if origin:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-        response.headers["X-CORS-Applied"] = "ComprehensiveMiddleware" # Diagnostic
-    
     return response
-
-# ─── Static Files (Logo, etc) ──────────────────────────────────────────
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 @app.exception_handler(404)
 async def custom_404_handler(request: Request, exc: HTTPException):
     log.error("404 Error", path=request.url.path, method=request.method)
-    return JSONResponse(
+    response = JSONResponse(
         status_code=404,
         content={"detail": "رابط غير موجود أو غير صالح", "path": request.url.path},
     )
+    origin = request.headers.get("origin")
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response
 
 
 # ─── Routes ───────────────────────────────────────────────────────────
