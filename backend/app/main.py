@@ -60,7 +60,7 @@ app = FastAPI(
 # ─── CORS ──────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
+    allow_origin_regex="https://.*\.railway\.app|http://localhost:.*|https://natiqa\.ai",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
