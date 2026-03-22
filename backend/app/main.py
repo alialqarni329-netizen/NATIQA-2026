@@ -57,25 +57,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ─── CORS (First) ──────────────────────────────────────────────────────
+# ─── CORS ──────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_origins=["https://frontend-production-043cd.up.railway.app", "http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.options("/{path:path}")
-async def options_handler(path: str):
-    return JSONResponse(
-        content={},
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
-            "Access-Control-Allow-Headers": "*",
-        }
-    )
 
 # ─── Static Files (Logo, etc) ──────────────────────────────────────────
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
