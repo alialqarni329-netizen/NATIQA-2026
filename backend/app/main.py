@@ -60,10 +60,11 @@ app = FastAPI(
 # ─── CORS ──────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://frontend-production-043cd.up.railway.app", "http://localhost:3000"],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # ─── Static Files (Logo, etc) ──────────────────────────────────────────
