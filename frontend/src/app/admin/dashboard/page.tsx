@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuthStore } from '@/lib/store'
+import { useAuthStore, useAuthHydrated } from '@/lib/store'
 import { adminApi } from '@/lib/api'
 import toast from 'react-hot-toast'
 import NotificationBell from '@/components/NotificationBell'
@@ -61,7 +61,7 @@ type Org = {
 
 export default function AdminDashboard() {
     const router = useRouter()
-    const { user, isAdmin } = useAuthStore()
+    const hydrated = useAuthHydrated()
     const [stats, setStats] = useState<Stats | null>(null)
     const [orgs, setOrgs] = useState<Org[]>([])
     const [loading, setLoading] = useState(true)
@@ -70,13 +70,22 @@ export default function AdminDashboard() {
     const [view, setView] = useState<'overview' | 'analytics'>('overview')
 
     useEffect(() => {
+        if (!hydrated) return
         if (!isAdmin()) {
             toast.error('Access Denied')
             router.push('/dashboard')
             return
         }
         fetchData()
-    }, [])
+    }, [hydrated])
+
+    if (!hydrated) {
+        return (
+            <div className="min-h-screen bg-[#0a0a0c] flex items-center justify-center">
+                <div className="w-10 h-10 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
+            </div>
+        )
+    }
 
     const fetchData = async () => {
         setLoading(true)

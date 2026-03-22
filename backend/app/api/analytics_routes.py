@@ -123,8 +123,9 @@ async def get_analytics_summary(
     # ────────────────────────────────────────────────────────────────
     # We can infer type from file_name extension or just use departmental distribution if requested.
     # The user asked for PDF, Word, PPT distribution.
+    # We use reverse split_part to get the extension safely in Postgres
     dist_q = select(
-        func.lower(func.split_part(Document.file_name, '.', -1)).label('ext'),
+        func.lower(func.reverse(func.split_part(func.reverse(Document.file_name), '.', 1))).label('ext'),
         func.count(Document.id).label('count')
     )
     if org_id:
@@ -134,11 +135,12 @@ async def get_analytics_summary(
     dist_res = (await db.execute(dist_q)).all()
     
     # Map extensions to friendly labels
-    mapping = {'pdf': 'PDF', 'docx': 'Word', 'doc': 'Word', 'pptx': 'PowerPoint', 'ppt': 'PowerPoint', 'xlsx': 'Excel', 'xls': 'Excel'}
+    mapping = {'pdf': 'PDF', 'docx': 'Word', 'doc': 'Word', 'pptx': 'PowerPoint', 'ppt': 'PowerPoint', 'xlsx': 'Excel', 'xls': 'Excel', 'csv': 'Excel', 'txt': 'نصي'}
     formatted_dist = {}
     for r in dist_res:
-        label = mapping.get(r.ext, 'أخرى')
-        formatted_dist[label] = formatted_dist.get(label, 0) + r.count
+        ext = getattr(r, "ext", "") or ""
+        label = mapping.get(ext, 'أخرى')
+        formatted_dist[label] = formatted_dist.get(label, 0) + (getattr(r, "count", 0) or 0)
     
     pie_data = [{"name": k, "value": v} for k, v in formatted_dist.items()]
 
