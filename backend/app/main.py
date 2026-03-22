@@ -57,12 +57,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ─── CORS (Manual Override) ──────────────────────────────────────────
+# ─── CORS (Comprehensive Resolution) ──────────────────────────────────
 @app.middleware("http")
-async def manual_cors_middleware(request: Request, call_next):
+async def comprehensive_cors_middleware(request: Request, call_next):
+    origin = request.headers.get("origin")
+    
+    # 1. Handle Preflight OPTIONS
     if request.method == "OPTIONS":
-        origin = request.headers.get("origin")
-        response = JSONResponse(content="OK")
+        response = JSONResponse(content={"message": "CORS Preflight OK"})
         if origin:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Credentials"] = "true"
@@ -70,13 +72,24 @@ async def manual_cors_middleware(request: Request, call_next):
             response.headers["Access-Control-Allow-Headers"] = "*"
         return response
 
-    response = await call_next(request)
-    origin = request.headers.get("origin")
+    # 2. Process Request
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        log.error("CORS Middleware: Request Failed", error=str(e))
+        response = JSONResponse(
+            status_code=500,
+            content={"detail": "Internal Server Error during CORS processing"}
+        )
+
+    # 3. Add CORS Headers to Response
     if origin:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
         response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["X-CORS-Applied"] = "ComprehensiveMiddleware" # Diagnostic
+    
     return response
 
 # ─── Static Files (Logo, etc) ──────────────────────────────────────────
