@@ -57,19 +57,27 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ─── CORS ──────────────────────────────────────────────────────────────
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "https://frontend-production-043cd.up.railway.app",
-        "https://frontend-production-043cd.up.railway.app/",
-        "http://localhost:3000",
-        "http://localhost:3000/",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ─── CORS (Manual Override) ──────────────────────────────────────────
+@app.middleware("http")
+async def manual_cors_middleware(request: Request, call_next):
+    if request.method == "OPTIONS":
+        origin = request.headers.get("origin")
+        response = JSONResponse(content="OK")
+        if origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
+
+    response = await call_next(request)
+    origin = request.headers.get("origin")
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 # ─── Static Files (Logo, etc) ──────────────────────────────────────────
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
