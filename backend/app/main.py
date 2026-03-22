@@ -62,10 +62,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://frontend-production-043cd.up.railway.app",
-        "https://frontend-production-043cd.up.railway.app/",
         "http://localhost:3000",
-        "http://localhost:3000/",
         "https://natiqa.ai",
+        "https://www.natiqa.ai",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -85,6 +84,23 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     if origin:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    log.error("Unhandled Exception", error=str(exc), path=request.url.path)
+    response = JSONResponse(
+        status_code=500,
+        content={"detail": "خطأ داخلي في الخادم. يرجى المحاولة لاحقاً.", "error_type": type(exc).__name__},
+    )
+    origin = request.headers.get("origin")
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
     return response
 
 @app.exception_handler(404)
@@ -98,6 +114,8 @@ async def custom_404_handler(request: Request, exc: HTTPException):
     if origin:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
     return response
 
 

@@ -79,9 +79,14 @@ async def get_current_user(
     if not user_id:
         raise credentials_exception
 
+    try:
+        uid = uuid.UUID(user_id)
+    except (ValueError, TypeError):
+        raise credentials_exception
+
     from sqlalchemy.orm import selectinload
     result = await db.execute(
-        select(User).options(selectinload(User.organization)).where(User.id == uuid.UUID(user_id))
+        select(User).options(selectinload(User.organization)).where(User.id == uid)
     )
     user = result.scalar_one_or_none()
 
