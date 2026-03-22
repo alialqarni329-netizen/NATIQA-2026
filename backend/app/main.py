@@ -79,7 +79,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     response = JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
-        headers=exc.headers
+        headers=exc.headers or {}
     )
     origin = request.headers.get("origin")
     if origin:
