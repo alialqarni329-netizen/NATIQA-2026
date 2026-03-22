@@ -225,6 +225,7 @@ async def handle_auto_classification(
     project_id: str,
     user_id: str,
     conv_id: str,
+    organization_id: Optional[str] = None,
 ):
     """
     Background Task for Auto-Organizer:
@@ -271,16 +272,18 @@ async def handle_auto_classification(
             await db.flush()
 
             # Ingestion
-            chunks = await rag_service.ingest_document(
+            chunks, classification = await rag_service.ingest_document(
                 file_bytes=file_bytes,
                 filename=filename,
                 doc_id=doc_id,
                 project_id=project_id,
                 department=department,
+                organization_id=organization_id,
             )
             
             if doc:
                 doc.chunks_count = chunks
+                doc.ai_metadata = classification
                 doc.status = DocumentStatus.READY
                 doc.file_path = f"{project_id}/{doc_id}.enc"
 

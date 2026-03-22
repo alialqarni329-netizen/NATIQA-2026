@@ -9,6 +9,8 @@ from fastapi import (
     APIRouter, Depends, HTTPException, status,
     UploadFile, File, Form, BackgroundTasks
 )
+from fastapi.responses import StreamingResponse
+import io
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
 from pydantic import BaseModel
@@ -29,6 +31,7 @@ from app.core.dependencies import get_redis
 import redis.asyncio as aioredis
 from app.services.notifications import create_notification
 from app.models.models import NotificationType, ProjectMember
+from app.services.generator import FileGenerator
 
 router = APIRouter()
 
@@ -483,6 +486,7 @@ async def chat(
         question=body.message,
         project_id=str(project_id),
         user=user,
+        db=db,
     )
 
     # Save assistant message
@@ -505,6 +509,69 @@ async def chat(
         "tokens": rag_result["tokens"],
         "response_time_ms": rag_result["response_time_ms"],
     }
+
+
+@router.post("/projects/{project_id}/export")
+async def export_report(
+    project_id: uuid.UUID,
+    format: str = Form("pdf"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """تصدير التقرير النهائي بتنسيقات متعددة (PDF, Word, Excel, etc.)"""
+    await _get_project(project_id, user, db)
+
+    # Get last assistant message in this project
+    result = await db.execute(
+        select(Message)
+        .join(Conversation, Message.conversation_id == Conversation.id)
+        .where(Conversation.project_id == project_id, Message.role == "assistant")
+        .order_by(Message.created_at.desc())
+        .limit(1)
+    )
+    last_msg = result.scalar_one_or_none()
+    if not last_msg:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="لا يوجد تقرير صادر من الذكاء الاصطناعي لتصديره حالياً"
+        )
+
+    content = last_msg.content
+    gen = FileGenerator()
+    
+    file_bytes = b""
+    media_type = "application/octet-stream"
+    ext = format.lower()
+
+    if ext == "pdf":
+        file_bytes = gen.to_pdf(content)
+        media_type = "application/pdf"
+    elif ext == "docx":
+        file_bytes = gen.to_docx(content)
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif ext == "xlsx":
+        file_bytes = gen.to_xlsx(content)
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    elif ext == "csv":
+        file_bytes = gen.to_csv(content)
+        media_type = "text/csv"
+    elif ext == "pptx":
+        file_bytes = gen.to_pptx(content)
+        media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    elif ext == "pbi_csv":
+        file_bytes = gen.to_pbi_csv(content)
+        media_type = "text/csv"
+        ext = "csv" # Download as .csv for Power BI
+    else:
+        file_bytes = gen.to_txt(content)
+        media_type = "text/plain"
+        ext = "txt"
+
+    return StreamingResponse(
+        io.BytesIO(file_bytes),
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename=natiqa_report_{project_id}.{ext}"}
+    )
 
 
 @router.get("/projects/{project_id}/conversations")
@@ -666,7 +733,8 @@ async def chat_upload(
         doc_id=doc_id,
         project_id=str(project.id),
         user_id=str(user.id),
-        conv_id=str(conv.id)
+        conv_id=str(conv.id),
+        organization_id=str(user.organization_id) if user.organization_id else None
     )
 
     return {

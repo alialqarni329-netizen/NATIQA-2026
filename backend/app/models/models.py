@@ -306,6 +306,7 @@ class Document(Base):
     )
     chunks_count:     Mapped[int]          = mapped_column(Integer, default=0)
     is_encrypted:     Mapped[bool]         = mapped_column(Boolean, default=True)
+    ai_metadata:      Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     processing_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     project_id:       Mapped[uuid.UUID]    = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     uploaded_by:      Mapped[uuid.UUID]    = mapped_column(ForeignKey("users.id"))

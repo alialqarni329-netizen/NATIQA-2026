@@ -5,7 +5,9 @@ import io
 from pathlib import Path
 
 import asyncio
-import aiofiles
+import logging
+from typing import Optional, List, Tuple
+
 import chromadb
 
 from app.core.config import settings
@@ -84,13 +86,18 @@ async def ingest_document(
     doc_id: str,
     project_id: str,
     department: str,
-) -> int:
+    organization_id: Optional[str] = None,
+) -> Tuple[int, dict]: # Return chunks count and classification
     log.info("Starting document ingestion", filename=filename, doc_id=doc_id)
 
-    # 1. Extract
+    # 1. Extract & Classify
     text = await extract_text(file_bytes, filename)
     if not text.strip():
         raise ValueError("Could not extract text from document")
+        
+    # Classification logic
+    classification = await classify_document_content(text[:1500])
+    log.info("Document classified", classification=classification)
 
     # 2. Split
     from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -124,9 +131,13 @@ async def ingest_document(
                 {
                     "doc_id": doc_id,
                     "filename": filename,
+                    "project_id": project_id,
+                    "organization_id": organization_id,
                     "department": department,
                     "chunk_index": i + j,
                     "provider": llm.provider_name,
+                    "doc_type": classification.get("document_type"),
+                    "priority": classification.get("priority"),
                 }
                 for j in range(len(batch))
             ],
@@ -136,17 +147,67 @@ async def ingest_document(
     encrypted = encrypt_file(file_bytes)
     save_path = Path(settings.UPLOAD_DIR) / project_id / f"{doc_id}.enc"
     save_path.parent.mkdir(parents=True, exist_ok=True)
+    import aiofiles
     async with aiofiles.open(save_path, "wb") as f:
         await f.write(encrypted)
 
     log.info("Ingestion complete", chunks=len(chunks), provider=llm.provider_name)
-    return len(chunks)
+    return len(chunks), classification
+
+
+# ─── Classification Helper ───────────────────────────────────────────
+async def classify_document_content(text_sample: str) -> dict:
+    """
+    Classify a document using AI.
+    Returns: { 'document_type': '...', 'summary': '...', 'priority': '...' }
+    """
+    from app.services.llm.factory import get_llm
+    import json
+    
+    llm = get_llm()
+    system_prompt = (
+        "You are a document analyzer. "
+        "Analyze the provided document text and return a JSON object with: "
+        "'document_type' (e.g., Contract, Invoice, Report, Memo, Legal), "
+        "'summary' (a concise 1-sentence summary in Arabic), "
+        "'priority' (High, Medium, or Low based on business importance). "
+        "Return ONLY the JSON object. No markdown, no backticks."
+    )
+    
+    try:
+        response = await llm.generate(
+            prompt=f"Text sample:\n{text_sample}",
+            system=system_prompt,
+            temperature=0.0,
+            max_tokens=200,
+        )
+        # Attempt to parse JSON
+        content = response.content.strip()
+        # Remove potential markdown block markers
+        if content.startswith("```"):
+            try:
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:]
+            except IndexError:
+                pass
+        
+        return json.loads(content)
+    except Exception as e:
+        log.warning("Classification failed", error=str(e))
+        return {
+            "document_type": "Unknown",
+            "summary": "فشل التحليل التلقائي للمستند.",
+            "priority": "Low"
+        }
 
 
 # ─── RAG Query ───────────────────────────────────────────────────────
 async def query_rag(
     question: str,
-    project_id: str,
+    project_id: Optional[str] = None,
+    organization_id: Optional[str] = None,
+    project_ids: Optional[List[str]] = None,
     top_k: int = 5,
 ) -> dict:
     import time
@@ -157,33 +218,58 @@ async def query_rag(
     q_embed_resp = await llm.embed(question)
     q_embed = q_embed_resp.embedding
 
-    collection = get_collection(project_id)
-    n = collection.count()
+    # 2. Vector Search
+    client = get_chroma_client()
+    
+    # If project_ids is not provided, but project_id is, use it.
+    target_projects = project_ids or ([project_id] if project_id else [])
+    
+    # Simple strategy: Search target project(s). 
+    # If organization_id is provided, the caller should have populated project_ids.
+    all_docs = []
+    all_metas = []
+    all_dists = []
 
-    results = collection.query(
-        query_embeddings=[q_embed],
-        n_results=min(top_k, n),
-        include=["documents", "metadatas", "distances"],
-    )
+    for p_id in target_projects:
+        try:
+            col = get_collection(p_id)
+            n = col.count()
+            if n == 0: continue
+            
+            res = col.query(
+                query_embeddings=[q_embed],
+                n_results=min(top_k, n),
+                include=["documents", "metadatas", "distances"],
+            )
+            if res["documents"] and res["documents"][0]:
+                all_docs.extend(res["documents"][0])
+                all_metas.extend(res["metadatas"][0])
+                all_dists.extend(res["distances"][0])
+        except Exception as e:
+            log.warning("Search failed for project", project_id=p_id, error=str(e))
 
+    # Sort results by distance across all projects
+    combined = sorted(zip(all_docs, all_metas, all_dists), key=lambda x: x[2])[:top_k]
+    
     sources = []
-    if not results["documents"] or not results["documents"][0]:
-        context = "No relevant context found. Use general knowledge."
+    if not combined:
+        context = "لم يتم العثور على سياق ذي صلة في الوثائق. استخدم معلوماتك العامة."
     else:
         context_parts = []
-        seen: set = set()
-        docs = results["documents"][0]
-        metas = results["metadatas"][0]
-        distances = results["distances"][0]
-
-        for doc, meta, dist in zip(docs, metas, distances):
+        seen_docs = set()
+        for doc, meta, dist in combined:
             fname = meta.get("filename", "مجهول")
+            pname = meta.get("project_name", meta.get("project_id", "غير محدد"))
             dept = meta.get("department", "")
-            context_parts.append(f"[المصدر: {fname}]\n{doc}")
-            if fname not in seen:
-                seen.add(fname)
+            
+            context_parts.append(f"[المشروع: {pname} | المصدر: {fname}]\n{doc}")
+            
+            d_id = meta.get("doc_id")
+            if d_id not in seen_docs:
+                seen_docs.add(d_id)
                 sources.append({
                     "filename": fname,
+                    "project_id": meta.get("project_id"),
                     "department": dept,
                     "relevance": round(1 - dist, 3),
                 })

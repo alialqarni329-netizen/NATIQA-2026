@@ -6,6 +6,9 @@
 from __future__ import annotations
 import time
 from typing import List, Optional
+import uuid
+from sqlalchemy import select
+from app.models.models import Project
 import structlog
 
 log = structlog.get_logger()
@@ -46,6 +49,7 @@ async def query_rag_scoped(
     question: str,
     project_id: str,
     user,
+    db, # Add db session for multi-project lookup
     top_k: int = 5,
 ) -> dict:
     from app.services.rag import get_collection
@@ -57,90 +61,76 @@ async def query_rag_scoped(
     where_filter = build_dept_where_filter(allowed)
 
     log.info(
-        "RAG scoped query",
+        "RAG scoped query (Global Search)",
         project_id=project_id,
         allowed_depts=allowed or "ALL",
-        question_preview=question[:60],
+        org_id=user.organization_id,
     )
 
     llm = get_llm()
 
-    # ── 1. Embed question ─────────────────────────────────────────────
+    # ── 1. Determine target projects (Global Search) ──────────────────
+    project_ids = [project_id]
+    if user.organization_id:
+        try:
+            res = await db.execute(
+                select(Project.id).where(Project.organization_id == user.organization_id)
+            )
+            project_ids = [str(pid) for pid in res.scalars().all()]
+        except Exception as e:
+            log.warning("Global Search: project lookup failed", error=str(e))
+
+    # ── 2. Embed question ─────────────────────────────────────────────
     q_embed_resp = await llm.embed(question)
     q_embed      = q_embed_resp.embedding
 
-    # ── 2. Scoped ChromaDB query ──────────────────────────────────────
-    collection = get_collection(project_id)
-    n          = collection.count()
+    # ── 3. Multi-project ChromaDB query ───────────────────────────────
+    all_combined = []
+    for p_id in project_ids:
+        try:
+            col = get_collection(p_id)
+            n = col.count()
+            if n == 0: continue
+            
+            query_kwargs = dict(
+                query_embeddings=[q_embed],
+                n_results=min(top_k, n),
+                include=["documents", "metadatas", "distances"],
+            )
+            if where_filter:
+                query_kwargs["where"] = where_filter
+                
+            results = col.query(**query_kwargs)
+            if results["documents"] and results["documents"][0]:
+                for doc, meta, dist in zip(results["documents"][0], results["metadatas"][0], results["distances"][0]):
+                    all_combined.append((doc, meta, dist))
+        except Exception:
+            continue
 
-    # if n == 0:
-    #     return {
-    #         "answer": "قاعدة المعرفة فارغة. يرجى رفع ملفات أولاً.",
-    #         "sources": [], "tokens": 0,
-    #         "response_time_ms": int((time.time() - start) * 1000),
-    #         "dept_filter_applied": allowed,
-    #     }
-
-    n_results = max(1, min(top_k, n))
-    query_kwargs = dict(
-        query_embeddings=[q_embed],
-        n_results=n_results,
-        include=["documents", "metadatas", "distances"],
-    )
-    if where_filter:
-        query_kwargs["where"] = where_filter
-
-    try:
-        results = collection.query(**query_kwargs)
-    except Exception as e:
-        log.warning("ChromaDB where-filter failed, falling back", error=str(e))
-        n_results_fallback = max(1, min(top_k * 3, n))
-        results = collection.query(
-            query_embeddings=[q_embed],
-            n_results=n_results_fallback,
-            include=["documents", "metadatas", "distances"],
-        )
-        if results["documents"] and allowed:
-            fd, fm, fdist = [], [], []
-            for doc, meta, dist in zip(
-                results["documents"][0],
-                results["metadatas"][0],
-                results["distances"][0],
-            ):
-                if meta.get("department") in allowed:
-                    fd.append(doc)
-                    fm.append(meta)
-                    fdist.append(dist)
-            results["documents"][0] = fd[:top_k]
-            results["metadatas"][0]  = fm[:top_k]
-            results["distances"][0]  = fdist[:top_k]
+    # Sort and pick top_k
+    all_combined = sorted(all_combined, key=lambda x: x[2])[:top_k]
 
     context_parts: list[str] = []
     sources: list[dict]      = []
 
-    if not results["documents"] or not results["documents"][0]:
-        log.info("No relevant documents found in ChromaDB")
-        # continue to prompt anyway
-        context = "No relevant context found in the project's documents. Use your general knowledge."
+    if not all_combined:
+        log.info("No relevant documents found in any project")
+        context = "لم يتم العثور على سياق ذي صلة في الوثائق. استخدم معلوماتك العامة."
     else:
-        # ── 3. Build context ──────────────────────────────────────────────
-        raw_docs  = results["documents"][0]
-        metas     = results["metadatas"][0]
-        distances = results["distances"][0]
-
-        seen: set                = set()
-
-        for doc_text, meta, dist in zip(raw_docs, metas, distances):
+        seen_docs = set()
+        for doc_text, meta, dist in all_combined:
             doc_id = meta.get("doc_id", "")
-            if doc_id in seen:
-                continue
-            seen.add(doc_id)
+            if doc_id in seen_docs: continue
+            seen_docs.add(doc_id)
+            
             dept = meta.get("department", "general")
+            p_id = meta.get("project_id", meta.get("project_name", "unknown"))
             context_parts.append(
-                f"[المصدر: {meta.get('filename','ملف')} | القسم: {dept}]\n{doc_text}"
+                f"[المشروع: {p_id} | المصدر: {meta.get('filename','ملف')} | القسم: {dept}]\n{doc_text}"
             )
             sources.append({
                 "doc_id":     doc_id,
+                "project_id": meta.get("project_id"),
                 "filename":   meta.get("filename", "ملف"),
                 "department": dept,
                 "relevance":  round(1 - float(dist), 3),
@@ -164,11 +154,10 @@ async def query_rag_scoped(
 
 إرشادات العمل:
 1. استخدم المعلومات المزودة في "السياق" أدناه للإجابة على سؤال المستخدم بدقة.
-2. إذا لم تجد الإجابة في السياق المزود، يمكنك الإجابة بناءً على معلوماتك العامة كخبير في الأنظمة السعودية، ولكن يجب أن توضح للمستخدم أنك تستخدم معلوماتك العامة لعدم توفر تفاصيل كافية في المستندات المرفوعة حالياً.
+2. إذا وجدت بيانات من مشاريع متعددة، قم بإجراء تحليل مقارن ووضح الفروق أو الاتجاهات.
 3. التزم دائماً بلهجة مهنية رسمية باللغة العربية.
-4. إذا كان السؤال خارج نطاق العمل أو الأنظمة، اعتذر بلباقة وركز على دورك كخبير "ناطقة".
 
-السياق (الوثائق المرفوعة):
+السياق (الوثائق المرفوعة عبر المؤسسة):
 {masked_context}
     """
 

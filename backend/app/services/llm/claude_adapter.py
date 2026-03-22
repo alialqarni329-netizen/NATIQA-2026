@@ -44,8 +44,8 @@ class ClaudeAdapter(LLMBase):
         self,
         prompt: str,
         system: Optional[str] = None,
-        temperature: float = 0.3,
-        max_tokens: int = 2048,
+        temperature: float = 0.5,
+        max_tokens: int = 8192,
     ) -> LLMResponse:
         from anthropic import AsyncAnthropic
         start = time.time()
@@ -55,9 +55,20 @@ class ClaudeAdapter(LLMBase):
         masked_prompt = prompt_mask.masked_text
         all_mappings = dict(prompt_mask.mappings)
 
+        hidden_instruction = (
+            "When asked to generate a report, use a clear structure with [HEADING], [TABLE], and [SLIDE] tags "
+            "so the Generator Service can parse them easily. "
+            "IMPORTANT: If the retrieved data contains tables or financial figures from multiple projects, "
+            "perform a comparative analysis and highlight the differences or trends."
+        )
         masked_system = None
         if system:
-            sys_mask = mask_sensitive_data(system, session_salt=salt)
+            full_system = f"{system}\n\n{hidden_instruction}"
+            sys_mask = mask_sensitive_data(full_system, session_salt=salt)
+            masked_system = sys_mask.masked_text
+            all_mappings.update(sys_mask.mappings)
+        else:
+            sys_mask = mask_sensitive_data(hidden_instruction, session_salt=salt)
             masked_system = sys_mask.masked_text
             all_mappings.update(sys_mask.mappings)
 
