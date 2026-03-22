@@ -339,7 +339,7 @@ async def _process_document(file_bytes, filename, doc_id, project_id, department
             log.error("Document not found in DB", doc_id=doc_id)
             return
         try:
-            chunks = await rag_service.ingest_document(
+            chunks_count, classification = await rag_service.ingest_document(
                 file_bytes=file_bytes,
                 filename=filename,
                 doc_id=doc_id,
@@ -347,9 +347,10 @@ async def _process_document(file_bytes, filename, doc_id, project_id, department
                 department=department,
             )
             doc.status = DocumentStatus.READY
-            doc.chunks_count = chunks
+            doc.chunks_count = chunks_count
+            doc.ai_metadata = classification
             doc.file_path = f"{project_id}/{doc_id}.enc"
-            log.info("Document processing complete", doc_id=doc_id, chunks=chunks)
+            log.info("Document processing complete", doc_id=doc_id, chunks=chunks_count)
             
             # NOTIFICATION: SUCCESS
             await create_notification(

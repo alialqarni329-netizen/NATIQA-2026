@@ -90,15 +90,20 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    log.error("Unhandled Exception", error=str(exc), path=request.url.path)
+    import traceback
+    error_trace = traceback.format_exc()
+    log.error("Unhandled Exception", error=str(exc), path=request.url.path, traceback=error_trace)
+    
     # Return error type and message for easier debugging for the user
     response = JSONResponse(
         status_code=500,
         content={
             "detail": "خطأ داخلي في الخادم. يرجى المحاولة لاحقاً.",
-            "error_type": type(exc).__name__,
-            "error_msg": str(exc),
-            "path": request.url.path
+            "debug": {
+                "error_type": type(exc).__name__,
+                "error_msg": str(exc),
+                "path": request.url.path
+            }
         },
     )
     origin = request.headers.get("origin")
