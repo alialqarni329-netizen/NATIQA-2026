@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://redis:6379/0"
 
     # ── CORS ──────────────────────────────────────────────────
-    CORS_ORIGINS: str = "http://localhost:3000,https://frontend-production-043cd.up.railway.app,https://natiqa.ai"
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3000/,https://frontend-production-043cd.up.railway.app,https://frontend-production-043cd.up.railway.app/,https://natiqa.ai"
     FRONTEND_URL: str = "http://localhost:3000"
 
     @property
