@@ -60,25 +60,19 @@ app = FastAPI(
 # ─── CORS ──────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex="https://.*\.railway\.app|http://localhost:.*|https://natiqa\.ai",
+    allow_origins=[
+        "https://frontend-production-043cd.up.railway.app",
+        "https://frontend-production-043cd.up.railway.app/",
+        "http://localhost:3000",
+        "http://localhost:3000/",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
 # ─── Static Files (Logo, etc) ──────────────────────────────────────────
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
-
-@app.middleware("http")
-async def security_headers(request: Request, call_next):
-    response = await call_next(request)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["X-XSS-Protection"] = "1; mode=block"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-    return response
 
 @app.exception_handler(404)
 async def custom_404_handler(request: Request, exc: HTTPException):
