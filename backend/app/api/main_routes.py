@@ -481,6 +481,23 @@ async def chat(
     # Count the query AFTER the check passes
     await UsageTracker.increment_ai_counter(str(user.id), redis)
 
+    # ── تحميل سجل المحادثة (آخر 10 رسائل) للذاكرة الكاملة ─────────────
+    history: list = []
+    if conv_id:
+        past_msgs = await db.execute(
+            select(Message)
+            .where(Message.conversation_id == conv.id)
+            .order_by(Message.created_at.desc())
+            .limit(10)
+        )
+        past_list = list(reversed(past_msgs.scalars().all()))
+        # استثني الرسالة الأخيرة (التي أضفناها للتو)
+        history = [
+            {"role": m.role, "content": m.content}
+            for m in past_list
+            if m.id != user_msg.id and len(m.content) < 4000
+        ]
+
     # RAG query — scoped to user's RBAC departments via rag_dept layer
     from app.services.rag_dept import query_rag_scoped
     rag_result = await query_rag_scoped(
@@ -488,6 +505,7 @@ async def chat(
         project_id=str(project_id),
         user=user,
         db=db,
+        conversation_history=history,
     )
 
     # Save assistant message
@@ -630,12 +648,14 @@ async def chat_upload(
     file: UploadFile = File(...),
     conversation_id: Optional[str] = Form(None),
     project_id: Optional[str] = Form(None),
+    user_message: Optional[str] = Form(None),  # ← رسالة المستخدم مع الملف
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis),
 ):
     """
     Auto-Organizer: upload a file directly from the chat interface.
+    user_message: الرسالة التي كتبها المستخدم مع الملف (اختياري)
     """
     from app.services.plans import get_effective_plan
     from app.services.auto_organizer import handle_auto_classification
@@ -717,10 +737,14 @@ async def chat_upload(
         db.add(conv)
         await db.flush()
 
-    db.add(Message(role="user", content=f"📎 {file.filename}", conversation_id=conv.id))
-    
-    # Initial "AI is analyzing" message
-    wait_msg = "جاري تحليل وتصنيف مشروعك بالذكاء الاصطناعي... ⏳\n\n_AI is analyzing and classifying your project..._"
+    # رسالة المستخدم: الملف + أي رسالة إضافية كتبها
+    user_content = f"📎 **{file.filename}**"
+    if user_message and user_message.strip():
+        user_content += f"\n\n{user_message.strip()}"
+    db.add(Message(role="user", content=user_content, conversation_id=conv.id))
+
+    # رسالة AI الأولية (ستُحدَّث بعد اكتمال التصنيف)
+    wait_msg = "⏳ جاري تحليل وتصنيف الملف بالذكاء الاصطناعي...\n\n_Analyzing and classifying your document..._"
     db.add(Message(role="assistant", content=wait_msg, conversation_id=conv.id))
 
     await db.commit()
@@ -735,7 +759,8 @@ async def chat_upload(
         project_id=str(project.id),
         user_id=str(user.id),
         conv_id=str(conv.id),
-        organization_id=str(user.organization_id) if user.organization_id else None
+        organization_id=str(user.organization_id) if user.organization_id else None,
+        user_message=user_message,
     )
 
     return {
@@ -743,7 +768,8 @@ async def chat_upload(
         "answer": wait_msg,
         "project_id": str(project.id),
         "doc_id": doc_id,
-        "status": "processing"
+        "status": "processing",
+        "filename": file.filename,
     }
 
 

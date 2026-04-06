@@ -169,11 +169,12 @@ export const notificationApi = {
 
 // ─── Auto-Organizer — in-chat file upload ─────────────────────────────
 export const autoOrganizerApi = {
-  uploadInChat: (file: File, conversationId?: string, projectId?: string) => {
+  uploadInChat: (file: File, conversationId?: string, projectId?: string, userMessage?: string) => {
     const fd = new FormData()
     fd.append('file', file)
     if (conversationId) fd.append('conversation_id', conversationId)
     if (projectId) fd.append('project_id', projectId)
+    if (userMessage) fd.append('user_message', userMessage)
     return api.post('/chat/upload', fd, {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 180000,

@@ -1,7 +1,12 @@
 """
 ╔══════════════════════════════════════════════════════════════════════╗
-║  NATIQA — RAG Department Isolation Layer                            ║
+║  NATIQA — RAG Department Isolation Layer + Conversation Memory       ║
 ╚══════════════════════════════════════════════════════════════════════╝
+
+إصلاحات v4.2:
+- إضافة ذاكرة المحادثة الكاملة (آخر 10 رسائل)
+- إصلاح ازدواج التقنيع: السياق الداخلي (وثائق المستخدم) يُرسَل
+  بـ trust_system=True فلا يُقنَّع في المحوّل — فقط سؤال المستخدم يُقنَّع
 """
 from __future__ import annotations
 import time
@@ -13,7 +18,7 @@ import structlog
 
 log = structlog.get_logger()
 
-ROLE_DEPT_DEFAULTS: dict[str, list[str]] = {
+ROLE_DEPT_DEFAULTS: dict[str, list] = {
     "super_admin": None,
     "admin":       None,
     "hr_analyst":  ["hr", "admin", "general"],
@@ -49,8 +54,9 @@ async def query_rag_scoped(
     question: str,
     project_id: str,
     user,
-    db, # Add db session for multi-project lookup
+    db,
     top_k: int = 5,
+    conversation_history: Optional[List[dict]] = None,
 ) -> dict:
     from app.services.rag import get_collection
     from app.services.llm import get_llm
@@ -61,15 +67,15 @@ async def query_rag_scoped(
     where_filter = build_dept_where_filter(allowed)
 
     log.info(
-        "RAG scoped query (Global Search)",
+        "RAG scoped query",
         project_id=project_id,
         allowed_depts=allowed or "ALL",
-        org_id=user.organization_id,
+        history_msgs=len(conversation_history) if conversation_history else 0,
     )
 
     llm = get_llm()
 
-    # ── 1. Determine target projects (Global Search) ──────────────────
+    # ── 1. تحديد المشاريع المستهدفة ─────────────────────────────────
     project_ids = [project_id]
     if user.organization_id:
         try:
@@ -80,18 +86,18 @@ async def query_rag_scoped(
         except Exception as e:
             log.warning("Global Search: project lookup failed", error=str(e))
 
-    # ── 2. Embed question ─────────────────────────────────────────────
+    # ── 2. تضمين السؤال ─────────────────────────────────────────────
     q_embed_resp = await llm.embed(question)
     q_embed      = q_embed_resp.embedding
 
-    # ── 3. Multi-project ChromaDB query ───────────────────────────────
+    # ── 3. البحث في ChromaDB عبر كل المشاريع ───────────────────────
     all_combined = []
     for p_id in project_ids:
         try:
             col = get_collection(p_id)
             n = col.count()
             if n == 0: continue
-            
+
             query_kwargs = dict(
                 query_embeddings=[q_embed],
                 n_results=min(top_k, n),
@@ -99,90 +105,95 @@ async def query_rag_scoped(
             )
             if where_filter:
                 query_kwargs["where"] = where_filter
-                
+
             results = col.query(**query_kwargs)
             if results["documents"] and results["documents"][0]:
-                for doc, meta, dist in zip(results["documents"][0], results["metadatas"][0], results["distances"][0]):
+                for doc, meta, dist in zip(
+                    results["documents"][0],
+                    results["metadatas"][0],
+                    results["distances"][0],
+                ):
                     all_combined.append((doc, meta, dist))
         except Exception:
             continue
 
-    # Sort and pick top_k
     all_combined = sorted(all_combined, key=lambda x: x[2])[:top_k]
 
-    context_parts: list[str] = []
-    sources: list[dict]      = []
+    context_parts: list = []
+    sources: list       = []
 
     if not all_combined:
         log.info("No relevant documents found in any project")
         context = "لم يتم العثور على سياق ذي صلة في الوثائق. استخدم معلوماتك العامة."
+        has_docs = False
     else:
         seen_docs = set()
         for doc_text, meta, dist in all_combined:
             doc_id = meta.get("doc_id", "")
             if doc_id in seen_docs: continue
             seen_docs.add(doc_id)
-            
-            dept = meta.get("department", "general")
-            p_id = meta.get("project_id", meta.get("project_name", "unknown"))
+
+            dept  = meta.get("department", "general")
+            p_id  = meta.get("project_id", "unknown")
+            fname = meta.get("filename", "ملف")
             context_parts.append(
-                f"[المشروع: {p_id} | المصدر: {meta.get('filename','ملف')} | القسم: {dept}]\n{doc_text}"
+                f"[المشروع: {p_id} | المصدر: {fname} | القسم: {dept}]\n{doc_text}"
             )
             sources.append({
                 "doc_id":     doc_id,
                 "project_id": meta.get("project_id"),
-                "filename":   meta.get("filename", "ملف"),
+                "filename":   fname,
                 "department": dept,
                 "relevance":  round(1 - float(dist), 3),
             })
 
         context = "\n\n---\n\n".join(context_parts)
+        has_docs = True
 
-    # ── 4. Mask → LLM → Unmask ───────────────────────────────────────
-    mask_ctx      = mask_sensitive_data(context)
-    masked_context = mask_ctx.masked_text
-    entities       = mask_ctx.mappings
-
-    mask_q         = mask_sensitive_data(question)
-    masked_question = mask_q.masked_text
-
+    # ── 4. بناء System Prompt (السياق) ──────────────────────────────
     dept_info = f"الأقسام المتاحة: {', '.join(allowed)}" if allowed else "جميع الأقسام"
 
-    system_prompt = f"""
-أنت مساعد ذكاء اصطناعي محترف للنظام السعودي "ناطقة" (Natiqa).
-مسؤوليتك هي مساعدة المستخدمين في تحليل الوثائق والبيانات بناءً على المعرفة المتوفرة في المشروع.
+    system_prompt = f"""أنت مساعد ذكاء اصطناعي محترف للنظام السعودي "ناطقة" (Natiqa).
+مهمتك تحليل وثائق المؤسسة والإجابة بدقة واحترافية.
 
-إرشادات العمل:
-1. استخدم المعلومات المزودة في "السياق" أدناه للإجابة على سؤال المستخدم بدقة.
-2. إذا وجدت بيانات من مشاريع متعددة، قم بإجراء تحليل مقارن ووضح الفروق أو الاتجاهات.
-3. التزم دائماً بلهجة مهنية رسمية باللغة العربية.
+إرشادات:
+1. استخدم المعلومات في "السياق" للإجابة بدقة. اذكر الأرقام والتفاصيل بوضوح.
+2. إذا وجدت بيانات من مشاريع متعددة، قارن وأبرز الفروق والاتجاهات.
+3. إذا لم تجد إجابة في الوثائق، قل ذلك بوضوح ثم استخدم معلوماتك العامة.
+4. الإجابة دائماً باللغة العربية بلهجة مهنية رسمية.
+5. {dept_info}
 
-السياق (الوثائق المرفوعة عبر المؤسسة):
-{masked_context}
-    """
+السياق (وثائق المؤسسة):
+{context}"""
 
+    # ── 5. تقنيع سؤال المستخدم فقط (لا السياق الداخلي) ─────────────
+    # trust_system=True: السياق بيانات داخلية لا تُقنَّع في المحوّل
+    # المحوّل سيُقنَّع سؤال المستخدم تلقائياً
+    # ملاحظة: لا نُقنَّع السياق هنا لأن ذلك كان يسبب:
+    #   1. ازدواج التقنيع (rag_dept + adapter)
+    #   2. تقنيع أرقام مالية كـ هوية وطنية → كلود لا يستطيع تحليلها
     prompt = (
-        f"{dept_info}\n\n"
-        f"السؤال: {masked_question}\n\n"
+        f"السؤال: {question}\n\n"
         f"الإجابة (باللغة العربية):"
     )
 
-    # ── 5. LLM call ───────────────────────────────────────────────────
+    # ── 6. استدعاء LLM مع سجل المحادثة ─────────────────────────────
     response = await llm.generate(
         prompt=prompt,
         system=system_prompt,
         temperature=0.1,
-        max_tokens=1500,
+        max_tokens=2048,
+        conversation_history=conversation_history,
+        trust_system=True,   # ← السياق بيانات داخلية موثوقة
     )
 
-    answer = unmask_data(response.content, entities)
-
     return {
-        "answer":              answer,
+        "answer":              response.content,
         "sources":             sources,
         "tokens":              response.total_tokens,
         "response_time_ms":    int((time.time() - start) * 1000),
         "dept_filter_applied": allowed or "ALL",
+        "has_context":         has_docs,
     }
 
 
@@ -195,7 +206,7 @@ async def get_user_accessible_docs_count(
     allowed    = resolve_user_departments(user)
     collection = get_collection(project_id)
     depts      = allowed if allowed else list(ALL_DEPARTMENTS)
-    counts: dict[str, int] = {}
+    counts: dict = {}
 
     for dept in depts:
         try:

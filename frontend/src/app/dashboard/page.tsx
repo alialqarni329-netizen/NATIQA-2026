@@ -396,7 +396,7 @@ function Dashboard() {
         <div style={{ flex: 1, overflowY: 'auto', padding: 22 }}>
           {view === 'dash' && <DashView projs={projs} setView={setView} setProj={setProj} />}
           {view === 'analytics' && <DashboardAnalytics />}
-          {view === 'chat' && <ChatView proj={proj} projs={projs} setProj={setProj} activeDept={activeDept} loadProjects={loadProjects} />}
+          {view === 'chat' && <ChatView proj={proj} projs={projs} setProj={setProj} activeDept={activeDept} setActiveDept={setActiveDept} setView={setView} loadProjects={loadProjects} />}
           {view === 'know' && <KnowView proj={proj} projs={projs} setProj={setProj} activeDept={activeDept} />}
           {view === 'projs' && <ProjsView projs={projs} setProjs={setProjs} setProj={setProj} setView={setView} loadProjects={loadProjects} />}
           {view === 'team' && <TeamView />}
@@ -479,7 +479,7 @@ function DashView({ projs, setView, setProj }: any) {
 }
 
 /* ══ CHAT ══════════════════════════════════════════════════ */
-function ChatView({ proj, projs, setProj, activeDept, loadProjects }: any) {
+function ChatView({ proj, projs, setProj, activeDept, setActiveDept, setView, loadProjects }: any) {
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [convId, setConvId] = useState<string | null>(null)
   const [input, setInput] = useState('')
@@ -487,6 +487,7 @@ function ChatView({ proj, projs, setProj, activeDept, loadProjects }: any) {
   const [docs, setDocs] = useState<Doc[]>([])
   const [showPlus, setShowPlus] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const plusRef = useRef<HTMLDivElement>(null)
@@ -504,6 +505,14 @@ function ChatView({ proj, projs, setProj, activeDept, loadProjects }: any) {
 
   async function send(txt?: string) {
     const q = txt || input.trim()
+    // If there's a pending file, upload it with the message (even if message is empty)
+    if (pendingFile) {
+      const file = pendingFile
+      setPendingFile(null)
+      setInput('')
+      await handleChatUpload(file, q || undefined)
+      return
+    }
     if (!q || !proj) return
     setInput(''); setShowPlus(false)
     const tid = `ai_${Date.now()}`
@@ -521,21 +530,22 @@ function ChatView({ proj, projs, setProj, activeDept, loadProjects }: any) {
   }
 
   /* ② Auto-Organizer: upload a file directly from chat */
-  async function handleChatUpload(file: File) {
+  async function handleChatUpload(file: File, userMsg?: string) {
     if (!file || uploading) return
     setShowPlus(false)
     const uid = `u_${Date.now()}`
     const tid = `ai_${Date.now()}`
+    const userLabel = userMsg ? `📎 ${file.name}\n${userMsg}` : `📎 ${file.name}`
     setMsgs(p => [...p,
-    { id: uid, role: 'user', content: `📎 ${file.name}`, created_at: new Date().toISOString() },
+    { id: uid, role: 'user', content: userLabel, created_at: new Date().toISOString() },
     { id: tid, role: 'assistant', content: '__loading__', created_at: new Date().toISOString() },
     ])
     setUploading(true)
     try {
-      const { data } = await autoOrganizerApi.uploadInChat(file, convId || undefined, proj?.id)
+      const { data } = await autoOrganizerApi.uploadInChat(file, convId || undefined, proj?.id, userMsg)
       if (!convId) setConvId(data.conversation_id)
 
-      // If the backend returns 'processing', it means classification is happening in background
+      // If the backend returns 'processing', classification is happening in background
       if (data.status === 'processing') {
         setMsgs(p => p.map(m => m.id === tid ? { ...m, content: data.answer } : m))
         // Refresh project list to show the new "Processing" project
@@ -550,16 +560,31 @@ function ChatView({ proj, projs, setProj, activeDept, loadProjects }: any) {
               if (updatedProj && updatedProj.status !== 'processing') {
                 clearInterval(poll)
                 if (loadProjects) await loadProjects()
-                // Update conversation messages if classification finished
-                chatApi.getMessages(data.conversation_id).then(r => setMsgs(r.data))
+                // Refresh conversation messages with AI answer
+                chatApi.getMessages(data.conversation_id).then(r => setMsgs(r.data)).catch(() => {})
                 toast.success(`✅ تم تصنيف المشروع: ${updatedProj.name}`)
-                if (proj?.status === 'processing' || !proj) setProj(updatedProj)
+                setProj(updatedProj)
+
+                // Auto-navigate: switch to the classified department in Knowledge view
+                const dept = updatedProj.name?.toLowerCase()
+                const deptMapping: Record<string, string> = {
+                  financial: 'financial', legal: 'legal', hr: 'hr',
+                  technical: 'technical', admin: 'admin', general: 'general',
+                }
+                const targetDept = deptMapping[dept] || 'general'
+                if (setActiveDept) setActiveDept(targetDept)
+                if (setView) {
+                  setTimeout(() => {
+                    setView('know')
+                    toast(`📂 فتح قسم ${updatedProj.name}`, { icon: '📂' })
+                  }, 1200)
+                }
               }
             } catch { clearInterval(poll) }
           }, 3000)
         }
       } else {
-        // Legacy flow (if backend didn't use background classification)
+        // Immediate response (classification already done or legacy flow)
         setMsgs(p => p.map(m => m.id === tid ? { ...m, content: data.answer } : m))
         if (loadProjects) await loadProjects()
         if (data.project_id && data.project_id !== proj?.id) {
@@ -567,7 +592,7 @@ function ChatView({ proj, projs, setProj, activeDept, loadProjects }: any) {
         }
       }
 
-      // Poll document status until ready (for ingestion)
+      // Poll document status until ingestion is ready
       if (data.doc_id && (data.project_id || proj?.id)) {
         let attempts = 0
         const pId = data.project_id || proj?.id
@@ -751,12 +776,22 @@ function ChatView({ proj, projs, setProj, activeDept, loadProjects }: any) {
             )}
           </div>
 
-          <textarea value={input} onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-            dir="rtl" rows={1} placeholder="اسأل عن مستندات المشروع... (Enter للإرسال)"
-            style={{ flex: 1, background: '#0c1829', border: '1px solid rgba(59,130,246,.15)', borderRadius: 12, padding: '13px 16px', color: '#ccd9ef', fontSize: 13, resize: 'none', lineHeight: 1.6, minHeight: 48, maxHeight: 120, outline: 'none', fontFamily: "'Tajawal',sans-serif" }} />
-          <button className="btn" onClick={() => send()} disabled={!input.trim() || loading}
-            style={{ width: 48, height: 48, borderRadius: 12, background: input.trim() && !loading ? 'linear-gradient(135deg,#1e40af,#3b82f6)' : '#0c1829', border: `1px solid ${input.trim() && !loading ? '#3b82f6' : 'rgba(59,130,246,.15)'}`, color: input.trim() && !loading ? '#fff' : '#2a4a6e', fontSize: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {pendingFile && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: 'rgba(59,130,246,.1)', border: '1px solid rgba(59,130,246,.25)', borderRadius: 8, fontSize: 12, color: '#7eb3f8' }}>
+                <span style={{ fontSize: 15 }}>📎</span>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pendingFile.name}</span>
+                <button onClick={() => setPendingFile(null)}
+                  style={{ background: 'none', border: 'none', color: '#5b7fa6', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 2px' }}>×</button>
+              </div>
+            )}
+            <textarea value={input} onChange={e => setInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+              dir="rtl" rows={1} placeholder={pendingFile ? 'اكتب سؤالاً عن الملف أو اضغط إرسال للتصنيف فقط...' : 'اسأل عن مستندات المشروع... (Enter للإرسال)'}
+              style={{ background: '#0c1829', border: '1px solid rgba(59,130,246,.15)', borderRadius: 12, padding: '13px 16px', color: '#ccd9ef', fontSize: 13, resize: 'none', lineHeight: 1.6, minHeight: 48, maxHeight: 120, outline: 'none', fontFamily: "'Tajawal',sans-serif", width: '100%', boxSizing: 'border-box' }} />
+          </div>
+          <button className="btn" onClick={() => send()} disabled={(!input.trim() && !pendingFile) || loading}
+            style={{ width: 48, height: 48, borderRadius: 12, background: (input.trim() || pendingFile) && !loading ? 'linear-gradient(135deg,#1e40af,#3b82f6)' : '#0c1829', border: `1px solid ${(input.trim() || pendingFile) && !loading ? '#3b82f6' : 'rgba(59,130,246,.15)'}`, color: (input.trim() || pendingFile) && !loading ? '#fff' : '#2a4a6e', fontSize: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, alignSelf: 'flex-end' }}>
             {loading ? <Spin /> : '➤'}
           </button>
         </div>
@@ -766,7 +801,7 @@ function ChatView({ proj, projs, setProj, activeDept, loadProjects }: any) {
           AES-256 · بيانات حساسة مُقنَّعة قبل الإرسال
         </div>
         <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,.pdf,.docx,.doc,.pptx,.txt,.md" style={{ display: 'none' }}
-          onChange={e => { const f = e.target.files?.[0]; if (f) handleChatUpload(f); e.target.value = '' }} />
+          onChange={e => { const f = e.target.files?.[0]; if (f) setPendingFile(f); e.target.value = '' }} />
       </div>
     </div>
   )
