@@ -435,3 +435,73 @@ class Invitation(Base):
 
     organization: Mapped["Organization"] = relationship()
     inviter: Mapped["User"] = relationship()
+
+
+# ══════════════════════════════════════════════════════════════════════
+# MESSAGING — Internal org communication system
+# ══════════════════════════════════════════════════════════════════════
+
+class ChannelType(str, PyEnum):
+    PUBLIC  = "public"   # All org members can join
+    PRIVATE = "private"  # Invite-only
+    DIRECT  = "direct"   # 1:1 — auto-created, not listed in /channels
+
+
+class Channel(Base):
+    """
+    A messaging channel (group or DM thread) scoped to an organization.
+    Direct messages are stored as DIRECT channels with exactly 2 members.
+    """
+    __tablename__ = "channels"
+
+    id:              Mapped[uuid.UUID]       = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID]       = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    created_by:      Mapped[uuid.UUID]       = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    name:            Mapped[Optional[str]]   = mapped_column(String(200), nullable=True)   # null for DM
+    description:     Mapped[Optional[str]]   = mapped_column(String(500), nullable=True)
+    channel_type:    Mapped[ChannelType]     = mapped_column(Enum(ChannelType, name="channeltype"), default=ChannelType.PUBLIC)
+    # For DM: store sorted pair "uuid1:uuid2" to find/dedup quickly
+    dm_key:          Mapped[Optional[str]]   = mapped_column(String(80), nullable=True, unique=True, index=True)
+    created_at:      Mapped[datetime]        = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    members:  Mapped[List["ChannelMember"]]  = relationship(back_populates="channel", cascade="all, delete-orphan")
+    messages: Mapped[List["ChannelMessage"]] = relationship(back_populates="channel", cascade="all, delete-orphan",
+                                                             order_by="ChannelMessage.created_at")
+
+
+class ChannelMember(Base):
+    """Membership record — who is in a channel."""
+    __tablename__ = "channel_members"
+
+    id:         Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    channel_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("channels.id", ondelete="CASCADE"), index=True)
+    user_id:    Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id",    ondelete="CASCADE"), index=True)
+    is_admin:   Mapped[bool]      = mapped_column(Boolean, default=False)
+    joined_at:  Mapped[datetime]  = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Track last seen message for unread count
+    last_read_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    channel: Mapped["Channel"] = relationship(back_populates="members")
+    user:    Mapped["User"]    = relationship()
+
+
+class ChannelMessage(Base):
+    """A single message inside a channel or DM thread."""
+    __tablename__ = "channel_messages"
+
+    id:         Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    channel_id: Mapped[uuid.UUID]      = mapped_column(ForeignKey("channels.id", ondelete="CASCADE"), index=True)
+    sender_id:  Mapped[uuid.UUID]      = mapped_column(ForeignKey("users.id",    ondelete="CASCADE"), index=True)
+    content:    Mapped[str]            = mapped_column(Text, nullable=False)
+    # Optional: link message to a document or project for context
+    ref_doc_id:     Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    ref_project_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    # edited / deleted
+    edited_at:  Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_deleted: Mapped[bool]               = mapped_column(Boolean, default=False)
+    # reactions stored as JSON: {"👍": ["user_id1", ...], "❤️": [...]}
+    reactions:  Mapped[Optional[dict]]     = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime]           = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    channel: Mapped["Channel"] = relationship(back_populates="messages")
+    sender:  Mapped["User"]    = relationship()

@@ -26,7 +26,8 @@ from app.api import admin_routes   # type: ignore  ← Phase 1 B2B admin approva
 from app.api import admin_portal   # type: ignore  ← Phase 2 Admin Dashboard UI
 from app.api import notification_routes
 from app.api import org_routes, analytics_routes
-from app.api import metrics_routes  # type: ignore  ← Prometheus monitoring
+from app.api import metrics_routes      # type: ignore  ← Prometheus monitoring
+from app.api import messaging_routes    # type: ignore  ← Internal messaging
 from app.services.trial_scheduler import create_scheduler  # type: ignore  ← Phase 3 Golden Trial
 
 log = structlog.get_logger()
@@ -144,6 +145,7 @@ app.include_router(erp_routes.router, prefix="/api")
 app.include_router(org_routes.router, prefix="/api")
 app.include_router(analytics_routes.router, prefix="/api")
 app.include_router(metrics_routes.router, prefix="/api")
+app.include_router(messaging_routes.router, prefix="/api")
 
 # ─── Static Files ──────────────────────────────────────────────────────
 app.mount("/static", StaticFiles(directory="app/static"), name="static")

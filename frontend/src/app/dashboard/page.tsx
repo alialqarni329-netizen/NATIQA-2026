@@ -3,7 +3,7 @@ import dynamic from 'next/dynamic'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuthStore, useAuthHydrated } from '@/lib/store'
-import { dashApi, projectsApi, docsApi, chatApi, docStatusApi, autoOrganizerApi, orgApi } from '@/lib/api'
+import { dashApi, projectsApi, docsApi, chatApi, docStatusApi, autoOrganizerApi, orgApi, messagingApi } from '@/lib/api'
 import toast from 'react-hot-toast'
 import NotificationBell from '@/components/NotificationBell'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
@@ -221,10 +221,11 @@ function Dashboard() {
   }, [permissions])
 
   const navItems = [
-    { id: 'dash', icon: '▣', label: 'لوحة التحكم' },
-    { id: 'chat', icon: '◉', label: 'المحادثة الذكية' },
-    { id: 'know', icon: '◈', label: 'قاعدة المعرفة' },
-    { id: 'projs', icon: '⊞', label: 'المشاريع' },
+    { id: 'dash',      icon: '▣',  label: 'لوحة التحكم' },
+    { id: 'chat',      icon: '◉',  label: 'المحادثة الذكية' },
+    { id: 'messaging', icon: '✉',  label: 'الرسائل الداخلية' },
+    { id: 'know',      icon: '◈',  label: 'قاعدة المعرفة' },
+    { id: 'projs',     icon: '⊞',  label: 'المشاريع' },
   ]
   if (isAdmin()) navItems.push({ id: 'admin', icon: '⚙️', label: 'إدارة النظام' })
   if (isOrgAdmin()) navItems.push({ id: 'analytics', icon: '📈', label: 'التحليلات المتقدمة' })
@@ -397,6 +398,7 @@ function Dashboard() {
           {view === 'dash' && <DashView projs={projs} setView={setView} setProj={setProj} />}
           {view === 'analytics' && <DashboardAnalytics />}
           {view === 'chat' && <ChatView proj={proj} projs={projs} setProj={setProj} activeDept={activeDept} setActiveDept={setActiveDept} setView={setView} loadProjects={loadProjects} />}
+          {view === 'messaging' && <MessagingView />}
           {view === 'know' && <KnowView proj={proj} projs={projs} setProj={setProj} activeDept={activeDept} />}
           {view === 'projs' && <ProjsView projs={projs} setProjs={setProjs} setProj={setProj} setView={setView} loadProjects={loadProjects} />}
           {view === 'team' && <TeamView />}
@@ -1181,6 +1183,323 @@ function TeamView() {
         <span>💡</span>
         <span>بصفتك مسؤول النظام (Org-Admin)، يمكنك دعوة زملائك وإدارة صلاحياتهم. الموظفون المدعوون سيصلهم بريد إلكتروني يحتوي على رابط تفعيل خاص.</span>
       </div>
+    </div>
+  )
+}
+
+/* ══ MESSAGING ══════════════════════════════════════════════ */
+type ChanMsg = { id: string; channel_id: string; sender_id: string; sender_name: string; content: string; is_deleted: boolean; reactions: Record<string, string[]>; edited_at: string | null; created_at: string; ref_doc_id?: string; ref_project_id?: string }
+type ChanItem = { id: string; name: string; description?: string; channel_type: string; member_count: number; unread: number; members?: any[] }
+type DmItem = { channel_id: string; with_user: { id: string; full_name: string; email: string }; unread: number; last_message?: { content: string; created_at: string; sender_id: string } | null }
+
+const EMOJIS = ['👍','❤️','😂','😮','😢','🔥','✅','🎉']
+
+function MessagingView() {
+  const { user } = useAuthStore()
+  const [tab, setTab] = useState<'channels' | 'dm'>('channels')
+  const [channels, setChannels] = useState<ChanItem[]>([])
+  const [dms, setDms] = useState<DmItem[]>([])
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [msgs, setMsgs] = useState<ChanMsg[]>([])
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [showCreate, setShowCreate] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newDesc, setNewDesc] = useState('')
+  const [newType, setNewType] = useState<'public' | 'private'>('public')
+  const [emojiFor, setEmojiFor] = useState<string | null>(null)
+  const endRef = useRef<HTMLDivElement>(null)
+  const esRef = useRef<EventSource | null>(null)
+
+  const activeChannel = tab === 'channels'
+    ? channels.find(c => c.id === activeId)
+    : dms.find(d => d.channel_id === activeId)
+
+  // Load channels / DMs
+  const loadList = async () => {
+    try {
+      if (tab === 'channels') {
+        const { data } = await messagingApi.listChannels()
+        setChannels(data)
+      } else {
+        const { data } = await messagingApi.listDms()
+        setDms(data)
+      }
+    } catch { }
+  }
+
+  useEffect(() => { loadList() }, [tab])
+
+  // Load messages when active channel changes
+  useEffect(() => {
+    if (!activeId) return
+    setMsgs([]); setLoading(true)
+    messagingApi.listMessages(activeId).then(r => setMsgs(r.data)).catch(() => {}).finally(() => setLoading(false))
+    messagingApi.markChannelRead(activeId).catch(() => {})
+  }, [activeId])
+
+  // Scroll to bottom
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs])
+
+  // SSE real-time updates
+  useEffect(() => {
+    const url = messagingApi.getStreamUrl()
+    const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
+    if (!token) return
+    // EventSource doesn't support custom headers — pass via query param (handled by Nginx/FastAPI)
+    const es = new EventSource(`${url}?token=${token}`)
+    esRef.current = es
+    es.addEventListener('message', (e) => {
+      try {
+        const ev = JSON.parse(e.data)
+        if (ev.type === 'new_message' && ev.message?.channel_id === activeId) {
+          setMsgs(p => [...p, ev.message])
+        } else if (ev.type === 'message_edited') {
+          setMsgs(p => p.map(m => m.id === ev.message_id ? { ...m, content: ev.content } : m))
+        } else if (ev.type === 'message_deleted') {
+          setMsgs(p => p.map(m => m.id === ev.message_id ? { ...m, is_deleted: true, content: '' } : m))
+        } else if (ev.type === 'reaction_update') {
+          setMsgs(p => p.map(m => m.id === ev.message_id ? { ...m, reactions: ev.reactions } : m))
+        } else if (ev.type === 'channel_created' || ev.type === 'members_added') {
+          loadList()
+        }
+      } catch { }
+    })
+    return () => { es.close(); esRef.current = null }
+  }, [activeId])
+
+  const sendMsg = async () => {
+    const q = input.trim()
+    if (!q || !activeId || sending) return
+    setSending(true); setInput('')
+    try {
+      const { data } = await messagingApi.sendMessage(activeId, q)
+      setMsgs(p => [...p, data])
+    } catch { toast.error('فشل الإرسال') }
+    finally { setSending(false) }
+  }
+
+  const createChannel = async () => {
+    if (!newName.trim()) return
+    try {
+      const { data } = await messagingApi.createChannel({ name: newName.trim(), description: newDesc.trim() || undefined, channel_type: newType })
+      toast.success(`✅ تم إنشاء قناة «${data.name}»`)
+      setShowCreate(false); setNewName(''); setNewDesc('')
+      await loadList()
+      setActiveId(data.id)
+    } catch { toast.error('فشل إنشاء القناة') }
+  }
+
+  const openDm = async (userId: string) => {
+    try {
+      const { data } = await messagingApi.openDm(userId)
+      setTab('dm'); await loadList()
+      setActiveId(data.channel_id)
+    } catch { toast.error('فشل فتح المحادثة') }
+  }
+
+  const react = async (msgId: string, emoji: string) => {
+    if (!activeId) return
+    try {
+      const { data } = await messagingApi.reactToMessage(activeId, msgId, emoji)
+      setMsgs(p => p.map(m => m.id === msgId ? { ...m, reactions: data.reactions } : m))
+    } catch { } finally { setEmojiFor(null) }
+  }
+
+  const myId = (user as any)?.id || ''
+
+  // ── Render ──
+  return (
+    <div style={{ display: 'flex', height: 'calc(100vh - 120px)', gap: 0, border: '1px solid rgba(59,130,246,.12)', borderRadius: 14, overflow: 'hidden' }}>
+
+      {/* ── Left: channel / DM list ── */}
+      <div style={{ width: 260, background: 'rgba(7,13,26,.97)', borderLeft: '1px solid rgba(59,130,246,.1)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+        {/* Tabs */}
+        <div style={{ display: 'flex', borderBottom: '1px solid rgba(59,130,246,.1)' }}>
+          {(['channels', 'dm'] as const).map(t => (
+            <button key={t} onClick={() => { setTab(t); setActiveId(null) }}
+              style={{ flex: 1, padding: '12px 0', fontSize: 12, fontWeight: tab === t ? 800 : 600, fontFamily: "'Tajawal'", background: 'none', border: 'none', borderBottom: `2px solid ${tab === t ? '#3b82f6' : 'transparent'}`, color: tab === t ? '#3b82f6' : '#3a5472', cursor: 'pointer' }}>
+              {t === 'channels' ? '# القنوات' : '✉ المباشرة'}
+            </button>
+          ))}
+        </div>
+
+        {/* Create button (channels only) */}
+        {tab === 'channels' && (
+          <button onClick={() => setShowCreate(true)}
+            style={{ margin: '10px 12px 0', padding: '8px 12px', background: 'rgba(59,130,246,.08)', border: '1px dashed rgba(59,130,246,.25)', borderRadius: 9, fontSize: 12, color: '#3b82f6', cursor: 'pointer', fontFamily: "'Tajawal'" }}>
+            ＋ قناة جديدة
+          </button>
+        )}
+
+        {/* List */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 8px' }}>
+          {tab === 'channels' ? channels.map(ch => (
+            <div key={ch.id} onClick={() => setActiveId(ch.id)}
+              style={{ padding: '10px 12px', borderRadius: 9, cursor: 'pointer', marginBottom: 3, background: activeId === ch.id ? 'rgba(59,130,246,.12)' : 'transparent', border: `1px solid ${activeId === ch.id ? 'rgba(59,130,246,.25)' : 'transparent'}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 13, opacity: .7 }}>{ch.channel_type === 'private' ? '🔒' : '#'}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#ccd9ef', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.name}</div>
+                <div style={{ fontSize: 10, color: '#3a5472' }}>{ch.member_count} عضو</div>
+              </div>
+              {ch.unread > 0 && (
+                <span style={{ minWidth: 18, height: 18, borderRadius: 9, background: '#3b82f6', color: '#fff', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px' }}>{ch.unread}</span>
+              )}
+            </div>
+          )) : dms.map(dm => (
+            <div key={dm.channel_id} onClick={() => setActiveId(dm.channel_id)}
+              style={{ padding: '10px 12px', borderRadius: 9, cursor: 'pointer', marginBottom: 3, background: activeId === dm.channel_id ? 'rgba(59,130,246,.12)' : 'transparent', border: `1px solid ${activeId === dm.channel_id ? 'rgba(59,130,246,.25)' : 'transparent'}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(59,130,246,.1)', border: '1px solid rgba(59,130,246,.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>👤</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#ccd9ef', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dm.with_user.full_name}</div>
+                {dm.last_message && <div style={{ fontSize: 10, color: '#3a5472', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dm.last_message.content}</div>}
+              </div>
+              {dm.unread > 0 && (
+                <span style={{ minWidth: 18, height: 18, borderRadius: 9, background: '#3b82f6', color: '#fff', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px' }}>{dm.unread}</span>
+              )}
+            </div>
+          ))}
+          {tab === 'channels' && channels.length === 0 && (
+            <div style={{ textAlign: 'center', padding: '30px 0', color: '#3a5472', fontSize: 12 }}>لا توجد قنوات بعد</div>
+          )}
+          {tab === 'dm' && dms.length === 0 && (
+            <div style={{ textAlign: 'center', padding: '30px 0', color: '#3a5472', fontSize: 12 }}>لا توجد محادثات مباشرة</div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Right: message area ── */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#060d1a', minWidth: 0 }}>
+        {!activeId ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#3a5472', gap: 12 }}>
+            <div style={{ fontSize: 52 }}>✉</div>
+            <div style={{ fontSize: 16, fontWeight: 800 }}>اختر قناة أو محادثة للبدء</div>
+            <div style={{ fontSize: 12 }}>تواصل مع فريقك مباشرة داخل ناطقة</div>
+          </div>
+        ) : (
+          <>
+            {/* Header */}
+            <div style={{ padding: '12px 20px', borderBottom: '1px solid rgba(59,130,246,.1)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, color: '#ccd9ef', flex: 1 }}>
+                {tab === 'channels'
+                  ? `# ${channels.find(c => c.id === activeId)?.name || ''}`
+                  : `✉ ${dms.find(d => d.channel_id === activeId)?.with_user.full_name || ''}`}
+              </div>
+              <div style={{ fontSize: 11, color: '#3a5472' }}>
+                {tab === 'channels' ? `${channels.find(c => c.id === activeId)?.member_count || 0} عضو` : 'محادثة مباشرة'}
+              </div>
+            </div>
+
+            {/* Messages */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {loading && <div style={{ textAlign: 'center', color: '#3a5472', fontSize: 12 }}>جاري التحميل...</div>}
+              {msgs.map(m => {
+                const isMe = m.sender_id === myId
+                return (
+                  <div key={m.id}
+                    style={{ display: 'flex', flexDirection: isMe ? 'row-reverse' : 'row', alignItems: 'flex-end', gap: 8, marginBottom: 6 }}
+                    onMouseLeave={() => setEmojiFor(null)}>
+                    {/* Avatar */}
+                    {!isMe && (
+                      <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'rgba(59,130,246,.1)', border: '1px solid rgba(59,130,246,.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flexShrink: 0 }}>
+                        {m.sender_name[0] || '?'}
+                      </div>
+                    )}
+                    <div style={{ maxWidth: '70%' }}>
+                      {!isMe && <div style={{ fontSize: 10, color: '#3b82f6', marginBottom: 3, fontWeight: 700 }}>{m.sender_name}</div>}
+                      <div style={{ position: 'relative' }}>
+                        <div
+                          style={{ padding: '9px 13px', borderRadius: isMe ? '14px 4px 14px 14px' : '4px 14px 14px 14px', background: isMe ? 'linear-gradient(135deg,#1e40af,#3b82f6)' : 'rgba(16,26,46,.9)', border: `1px solid ${isMe ? 'rgba(59,130,246,.4)' : 'rgba(59,130,246,.1)'}`, fontSize: 13, color: m.is_deleted ? '#3a5472' : '#ccd9ef', fontStyle: m.is_deleted ? 'italic' : 'normal', lineHeight: 1.55, cursor: 'default' }}
+                          onMouseEnter={() => !m.is_deleted && setEmojiFor(m.id)}>
+                          {m.is_deleted ? '🗑 تم حذف هذه الرسالة' : m.content}
+                          {m.edited_at && !m.is_deleted && <span style={{ fontSize: 9, color: 'rgba(255,255,255,.4)', marginRight: 6 }}>معدّل</span>}
+                        </div>
+                        {/* Emoji picker on hover */}
+                        {emojiFor === m.id && !m.is_deleted && (
+                          <div style={{ position: 'absolute', [isMe ? 'right' : 'left']: 0, bottom: '110%', display: 'flex', gap: 3, background: 'rgba(7,13,26,.97)', border: '1px solid rgba(59,130,246,.2)', borderRadius: 10, padding: '5px 8px', zIndex: 20 }}>
+                            {EMOJIS.map(e => (
+                              <button key={e} onClick={() => react(m.id, e)}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: '1px 2px', borderRadius: 5, transition: 'background .15s' }}
+                                onMouseOver={ev => (ev.currentTarget.style.background = 'rgba(59,130,246,.15)')}
+                                onMouseOut={ev => (ev.currentTarget.style.background = 'none')}>
+                                {e}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      {/* Reactions */}
+                      {Object.keys(m.reactions || {}).length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4, justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
+                          {Object.entries(m.reactions).map(([emoji, users]) => (
+                            <button key={emoji} onClick={() => react(m.id, emoji)}
+                              style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '2px 7px', background: users.includes(myId) ? 'rgba(59,130,246,.15)' : 'rgba(30,46,70,.8)', border: `1px solid ${users.includes(myId) ? 'rgba(59,130,246,.35)' : 'rgba(59,130,246,.1)'}`, borderRadius: 10, fontSize: 12, cursor: 'pointer', color: '#ccd9ef' }}>
+                              {emoji} <span style={{ fontSize: 10, fontWeight: 700 }}>{users.length}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 10, color: '#2a4a6e', marginTop: 3, textAlign: isMe ? 'right' : 'left' }}>
+                        {new Date(m.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+              <div ref={endRef} />
+            </div>
+
+            {/* Input */}
+            <div style={{ padding: '12px 16px', borderTop: '1px solid rgba(59,130,246,.1)', flexShrink: 0 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                <textarea
+                  value={input} onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg() } }}
+                  dir="rtl" rows={1} placeholder="اكتب رسالة... (Enter للإرسال)"
+                  style={{ flex: 1, background: '#0c1829', border: '1px solid rgba(59,130,246,.15)', borderRadius: 10, padding: '11px 14px', color: '#ccd9ef', fontSize: 13, resize: 'none', lineHeight: 1.5, minHeight: 44, maxHeight: 100, outline: 'none', fontFamily: "'Tajawal'" }} />
+                <button onClick={sendMsg} disabled={!input.trim() || sending}
+                  style={{ width: 44, height: 44, borderRadius: 10, background: input.trim() && !sending ? 'linear-gradient(135deg,#1e40af,#3b82f6)' : '#0c1829', border: `1px solid ${input.trim() && !sending ? '#3b82f6' : 'rgba(59,130,246,.15)'}`, color: input.trim() && !sending ? '#fff' : '#2a4a6e', fontSize: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: input.trim() ? 'pointer' : 'not-allowed', flexShrink: 0 }}>
+                  {sending ? '...' : '➤'}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── Create Channel Modal ── */}
+      {showCreate && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }} onClick={e => { if (e.target === e.currentTarget) setShowCreate(false) }}>
+          <div style={{ background: '#0c1829', border: '1px solid rgba(59,130,246,.2)', borderRadius: 16, padding: 28, width: 420, maxWidth: '90vw' }}>
+            <div style={{ fontWeight: 800, fontSize: 16, color: '#ccd9ef', marginBottom: 20 }}>إنشاء قناة جديدة</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="اسم القناة *" dir="rtl"
+                style={{ background: '#060d1a', border: '1px solid rgba(59,130,246,.2)', borderRadius: 9, padding: '10px 14px', color: '#ccd9ef', fontSize: 13, outline: 'none', fontFamily: "'Tajawal'" }} />
+              <input value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder="وصف القناة (اختياري)" dir="rtl"
+                style={{ background: '#060d1a', border: '1px solid rgba(59,130,246,.2)', borderRadius: 9, padding: '10px 14px', color: '#ccd9ef', fontSize: 13, outline: 'none', fontFamily: "'Tajawal'" }} />
+              <div style={{ display: 'flex', gap: 8 }}>
+                {(['public', 'private'] as const).map(t => (
+                  <button key={t} onClick={() => setNewType(t)}
+                    style={{ flex: 1, padding: '9px 0', borderRadius: 9, background: newType === t ? 'rgba(59,130,246,.15)' : 'rgba(6,13,26,.8)', border: `1px solid ${newType === t ? 'rgba(59,130,246,.4)' : 'rgba(59,130,246,.12)'}`, color: newType === t ? '#3b82f6' : '#5b7fa6', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: "'Tajawal'" }}>
+                    {t === 'public' ? '🌐 عامة' : '🔒 خاصة'}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                <button onClick={() => setShowCreate(false)}
+                  style={{ flex: 1, padding: '10px 0', borderRadius: 9, background: 'none', border: '1px solid rgba(59,130,246,.15)', color: '#5b7fa6', fontSize: 13, cursor: 'pointer', fontFamily: "'Tajawal'" }}>
+                  إلغاء
+                </button>
+                <button onClick={createChannel} disabled={!newName.trim()}
+                  style={{ flex: 2, padding: '10px 0', borderRadius: 9, background: newName.trim() ? 'linear-gradient(135deg,#1e40af,#3b82f6)' : '#0c1829', border: '1px solid rgba(59,130,246,.3)', color: newName.trim() ? '#fff' : '#3a5472', fontSize: 13, fontWeight: 700, cursor: newName.trim() ? 'pointer' : 'not-allowed', fontFamily: "'Tajawal'" }}>
+                  ✓ إنشاء القناة
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
