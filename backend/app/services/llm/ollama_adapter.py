@@ -2,15 +2,18 @@
 Ollama Local LLM Adapter
 ==========================
 يُنفّذ LLMBase باستخدام Ollama (Local LLM).
-لا Masking مطلوب — كل شيء يعمل محلياً على الخادم.
+
+ملاحظة أمنية: على الرغم من أن Ollama يعمل محلياً، نُطبّق Data Masking
+كطبقة دفاع متعمق (Defense-in-Depth) لضمان عدم تخزين أي بيانات حساسة
+في سجلات Ollama أو ذاكرة النموذج عند إعادة تحميله.
 """
 import time
-import asyncio
 from typing import Optional
 
 import httpx
 
 from app.services.llm.base import LLMBase, LLMResponse, EmbeddingResponse
+from app.services.llm.masking import mask_sensitive_data, unmask_data
 from app.core.config import settings
 import structlog
 
@@ -18,7 +21,7 @@ log = structlog.get_logger()
 
 
 class OllamaAdapter(LLMBase):
-    """Adapter لـ Ollama — يعمل محلياً بالكامل بدون أي API خارجي."""
+    """Adapter لـ Ollama — يعمل محلياً مع Data Masking كطبقة أمان إضافية."""
 
     @property
     def provider_name(self) -> str:
@@ -30,12 +33,31 @@ class OllamaAdapter(LLMBase):
         system: Optional[str] = None,
         temperature: float = 0.3,
         max_tokens: int = 2048,
+        session_salt: str = "",
     ) -> LLMResponse:
         start = time.time()
 
+        # ── Data Masking (Defense-in-Depth) ──────────────────────────────
+        mask_result = mask_sensitive_data(prompt, session_salt=session_salt)
+        masked_prompt = mask_result.masked_text
+        if mask_result.count > 0:
+            log.info(
+                "Ollama: sensitive data masked before local inference",
+                fields_masked=mask_result.count,
+            )
+
+        masked_system = system
+        system_mappings: dict = {}
+        if system:
+            sys_result = mask_sensitive_data(system, session_salt=session_salt)
+            masked_system = sys_result.masked_text
+            system_mappings = sys_result.mappings
+
+        all_mappings = {**mask_result.mappings, **system_mappings}
+
         payload = {
             "model": settings.OLLAMA_MODEL,
-            "prompt": prompt,
+            "prompt": masked_prompt,
             "stream": False,
             "options": {
                 "temperature": temperature,
@@ -43,8 +65,8 @@ class OllamaAdapter(LLMBase):
                 "top_p": 0.9,
             },
         }
-        if system:
-            payload["system"] = system
+        if masked_system:
+            payload["system"] = masked_system
 
         async with httpx.AsyncClient(timeout=180.0) as client:
             resp = await client.post(
@@ -54,11 +76,16 @@ class OllamaAdapter(LLMBase):
             resp.raise_for_status()
             data = resp.json()
 
+        raw_response = data.get("response", "").strip()
+
+        # ── Unmasking: استعادة القيم الأصلية للمستخدم ───────────────────
+        final_response = unmask_data(raw_response, all_mappings) if all_mappings else raw_response
+
         prompt_t = data.get("prompt_eval_count", 0)
         comp_t   = data.get("eval_count", 0)
 
         return LLMResponse(
-            content=data.get("response", "").strip(),
+            content=final_response,
             model=settings.OLLAMA_MODEL,
             prompt_tokens=prompt_t,
             completion_tokens=comp_t,

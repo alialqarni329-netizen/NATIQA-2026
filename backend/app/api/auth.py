@@ -11,7 +11,6 @@ import io
 import re
 import secrets
 import string
-import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -31,7 +30,7 @@ from app.core.security import (
     verify_password, verify_totp,
 )
 from app.models.models import (
-    ApprovalStatus, AuditAction, DocumentType,
+    ApprovalStatus, AuditAction,
     Organization, RefreshToken, User, UserRole,
 )
 
@@ -456,77 +455,6 @@ async def login(
     db:      AsyncSession   = Depends(get_db),
     redis:   aioredis.Redis = Depends(get_redis),
 ):
-    # ⚠️ DEV HARDCODED ACCOUNT — bypass DB for local testing
-    # TODO: remove before going to production
-    _DEV_EMAIL    = "ali@natiqa.com"
-    _DEV_PASSWORD = "Alluosh2026"
-    _DEV_USER_ID  = "c2853f49-bca3-46fc-a755-9abd2d6e759f"
-    if body.email.lower() == _DEV_EMAIL and body.password == _DEV_PASSWORD:
-        dev_user = (await db.execute(select(User).where(User.email == _DEV_EMAIL))).scalar_one_or_none()
-        if not dev_user:
-            from app.core.security import hash_password
-            org = Organization(
-                name="Natiqa Dev",
-                document_type=DocumentType.CR,
-                tax_number=f"DEV-{uuid.uuid4().hex[:12]}",
-                terms_accepted=True,
-                terms_accepted_at=datetime.now(timezone.utc),
-            )
-            db.add(org)
-            await db.flush()
-            dev_user = User(
-                id=uuid.UUID(_DEV_USER_ID),
-                email=_DEV_EMAIL,
-                full_name="Ali (Dev)",
-                hashed_password=hash_password(_DEV_PASSWORD),
-                role=UserRole.SUPER_ADMIN,
-                is_active=True,
-                is_verified=True,
-                organization_id=org.id,
-                business_name="Natiqa Dev",
-                document_type=DocumentType.CR,
-                document_number="1234567890",
-                approval_status=ApprovalStatus.APPROVED,
-                terms_accepted=True,
-                terms_accepted_at=datetime.now(timezone.utc),
-            )
-            db.add(dev_user)
-            await db.commit()
-
-        _dev_access  = create_access_token(
-            str(dev_user.id),
-            extra={"role": "super_admin", "email": _DEV_EMAIL},
-        )
-        _dev_refresh = create_refresh_token(str(dev_user.id))
-        
-        rt_payload   = decode_token(_dev_refresh)
-        db.add(RefreshToken(
-            jti=rt_payload["jti"],
-            user_id=dev_user.id,
-            expires_at=datetime.fromtimestamp(rt_payload["exp"], tz=timezone.utc)
-        ))
-        await db.commit()
-
-        return TokenResponse(
-            access_token  = _dev_access,
-            refresh_token = _dev_refresh,
-            user = {
-                "id":            str(dev_user.id),
-                "email":         _DEV_EMAIL,
-                "full_name":     "Ali",
-                "role":          "super_admin",
-                "is_admin":      True,
-                "business_name": "Natiqa",
-                "totp_enabled":  False,
-                "trial": {
-                    "active":         True,
-                    "days_remaining": 15,
-                    "ends_at":        None,
-                    "just_activated": True,
-                },
-            },
-        )
-
     # ── Lookup user ──────────────────────────────────────────────────
     ip   = request.client.host if request.client else "unknown"
     user = (await db.execute(select(User).where(User.email == body.email.lower()))).scalar_one_or_none()

@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     FIRST_ADMIN_PASSWORD: str = "Admin@2025!"
     FIRST_ADMIN_NAME:     str = "مدير النظام"
 
+    # ── Monitoring ────────────────────────────────────────────
+    METRICS_TOKEN: str = ""  # empty = localhost-only access
+
     class Config:
         env_file      = ".env"
         case_sensitive = True
