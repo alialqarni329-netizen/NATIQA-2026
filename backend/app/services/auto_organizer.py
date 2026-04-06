@@ -226,6 +226,7 @@ async def handle_auto_classification(
     user_id: str,
     conv_id: str,
     organization_id: Optional[str] = None,
+    user_message: Optional[str] = None,
 ):
     """
     Background Task for Auto-Organizer:
@@ -235,9 +236,10 @@ async def handle_auto_classification(
       4. Update conversation confirmation message.
     """
     from app.core.database import AsyncSessionLocal
-    from app.models.models import Project, ProjectStatus, Document, Message, User
+    from app.models.models import Project, ProjectStatus, Document, DocumentStatus, Message, User
     from app.services.llm.factory import get_llm
     from app.services import rag as rag_service
+    from app.services.rag_dept import query_rag_scoped
     import traceback
 
     log.info("Auto-classification background task started", filename=filename, project_id=project_id)
@@ -267,7 +269,7 @@ async def handle_auto_classification(
             doc = res_d.scalar_one_or_none()
             if doc:
                 doc.department = department
-            
+
             # Flush project/doc updates before ingestion
             await db.flush()
 
@@ -280,14 +282,36 @@ async def handle_auto_classification(
                 department=department,
                 organization_id=organization_id,
             )
-            
+
             if doc:
                 doc.chunks_count = chunks
                 doc.ai_metadata = classification
                 doc.status = DocumentStatus.READY
                 doc.file_path = f"{project_id}/{doc_id}.enc"
 
-            # 4. Update Assistant Message
+            # 4. Build assistant message — classification summary + optional RAG answer
+            confirm = build_confirmation(filename, category, project.name)
+
+            if user_message and user_message.strip():
+                # User asked a question alongside the file — answer it using the freshly-ingested doc
+                try:
+                    res_u = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+                    user_obj = res_u.scalar_one_or_none()
+                    if user_obj:
+                        rag_result = await query_rag_scoped(
+                            question=user_message,
+                            project_id=project_id,
+                            user=user_obj,
+                            db=db,
+                        )
+                        confirm = confirm + "\n\n---\n\n" + rag_result["answer"]
+                        log.info("auto_organizer: answered user_message after classification",
+                                 project_id=project_id, tokens=rag_result.get("tokens"))
+                except Exception as rag_exc:
+                    log.warning("auto_organizer: RAG query failed after classification",
+                                error=str(rag_exc))
+
+            # 5. Update Assistant Message
             res_m = await db.execute(
                 select(Message)
                 .where(Message.conversation_id == uuid.UUID(conv_id), Message.role == "assistant")
@@ -296,14 +320,14 @@ async def handle_auto_classification(
             )
             ai_msg = res_m.scalar_one_or_none()
             if ai_msg:
-                ai_msg.content = build_confirmation(filename, category, project.name)
+                ai_msg.content = confirm
 
             await db.commit()
             log.info("Auto-classification complete", project_id=project_id, category=category)
 
         except Exception as e:
             tb = traceback.format_exc()
-            log.error("Auto-classification failed", project_id=project_id, error=str(e))
+            log.error("Auto-classification failed", project_id=project_id, error=str(e), traceback=tb)
             await db.rollback()
 
 

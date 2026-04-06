@@ -57,6 +57,13 @@ apscheduler==3.10.4
 # ─── Logging ──────────────────────────────────────────────
 structlog==24.1.0
 
+# ─── Monitoring ───────────────────────────────────────────────
+psutil==5.9.8
+
+# ─── Testing ──────────────────────────────────────────────────
+# (install separately in CI: pip install pytest pytest-asyncio pytest-cov httpx aiosqlite anyio)
+
+
 # ─── Agent Orchestration ──────────────────────────────────
 celery[redis]==5.3.6
 

@@ -1,9 +1,9 @@
 """
-Claude API Adapter
+Claude API Adapter — مع دعم كامل للمحادثات متعددة الأدوار وتقنيع البيانات
 """
 import time
 import asyncio
-from typing import Optional
+from typing import Optional, List
 
 import httpx
 
@@ -46,54 +46,101 @@ class ClaudeAdapter(LLMBase):
         system: Optional[str] = None,
         temperature: float = 0.5,
         max_tokens: int = 8192,
+        conversation_history: Optional[List[dict]] = None,
+        trust_system: bool = False,
     ) -> LLMResponse:
+        """
+        يُرسل الرسالة لـ Claude مع دعم:
+        - conversation_history: سجل المحادثة للذاكرة الكاملة
+        - trust_system=True: لا يُقنَّع system prompt (بيانات وثائق داخلية)
+        - trust_system=False (default): يُقنَّع كل شيء (للبيانات الخارجية)
+        """
         from anthropic import AsyncAnthropic
+        import os
+
         start = time.time()
         salt = settings.ENCRYPTION_KEY[:16]
+        all_mappings: dict = {}
 
+        # ── تقنيع رسالة المستخدم الحالية دائماً ────────────────────────
         prompt_mask = mask_sensitive_data(prompt, session_salt=salt)
         masked_prompt = prompt_mask.masked_text
-        all_mappings = dict(prompt_mask.mappings)
+        all_mappings.update(prompt_mask.mappings)
 
+        # ── system prompt: يُقنَّع فقط عند trust_system=False ────────────
         hidden_instruction = (
-            "When asked to generate a report, use a clear structure with [HEADING], [TABLE], and [SLIDE] tags "
-            "so the Generator Service can parse them easily. "
-            "IMPORTANT: If the retrieved data contains tables or financial figures from multiple projects, "
-            "perform a comparative analysis and highlight the differences or trends."
+            "When generating reports, use clear structure with [HEADING], [TABLE], and [SLIDE] tags. "
+            "For multi-project data, perform comparative analysis highlighting differences and trends. "
+            "Always respond in Arabic unless explicitly asked otherwise."
         )
-        masked_system = None
-        if system:
-            full_system = f"{system}\n\n{hidden_instruction}"
-            sys_mask = mask_sensitive_data(full_system, session_salt=salt)
-            masked_system = sys_mask.masked_text
-            all_mappings.update(sys_mask.mappings)
-        else:
-            sys_mask = mask_sensitive_data(hidden_instruction, session_salt=salt)
-            masked_system = sys_mask.masked_text
-            all_mappings.update(sys_mask.mappings)
 
-        import os
+        masked_system: Optional[str] = None
+        if system:
+            if trust_system:
+                # بيانات داخلية (وثائق المستخدم) — لا تقنيع
+                masked_system = f"{system}\n\n{hidden_instruction}"
+                log.debug("Claude: system prompt trusted (no masking)", chars=len(system))
+            else:
+                # بيانات خارجية أو تكامل — تقنيع كامل
+                full_system = f"{system}\n\n{hidden_instruction}"
+                sys_mask = mask_sensitive_data(full_system, session_salt=salt)
+                masked_system = sys_mask.masked_text
+                all_mappings.update(sys_mask.mappings)
+        else:
+            masked_system = hidden_instruction
+
+        # ── بناء سجل المحادثة (multi-turn) ──────────────────────────────
+        messages: List[dict] = []
+
+        if conversation_history:
+            for msg in conversation_history:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role not in ("user", "assistant"):
+                    continue
+                # تقنيع رسائل المستخدم في التاريخ
+                if role == "user" and content:
+                    h_mask = mask_sensitive_data(content, session_salt=salt)
+                    content = h_mask.masked_text
+                    all_mappings.update(h_mask.mappings)
+                messages.append({"role": role, "content": content})
+
+        # إضافة الرسالة الحالية
+        messages.append({"role": "user", "content": masked_prompt})
+
+        # Claude API يتطلب أن يتبادل user/assistant — تحقق من الترتيب
+        messages = _ensure_alternating(messages)
+
         api_key = os.environ.get("ANTHROPIC_API_KEY", settings.CLAUDE_API_KEY)
         client = AsyncAnthropic(api_key=api_key)
 
-        kwargs = {
+        kwargs: dict = {
             "model": settings.CLAUDE_MODEL,
             "max_tokens": max_tokens,
             "temperature": temperature,
-            "messages": [{"role": "user", "content": masked_prompt}],
+            "messages": messages,
         }
         if masked_system:
             kwargs["system"] = masked_system
 
+        if all_mappings:
+            log.debug(
+                "Claude: data masking applied",
+                fields_masked=len(all_mappings),
+                trust_system=trust_system,
+            )
+
         resp = await client.messages.create(**kwargs)
-        
+
         raw_content = resp.content[0].text
-        content = unmask_data(raw_content, all_mappings)
+
+        # ── فك التقنيع على الرد ──────────────────────────────────────────
+        content = unmask_data(raw_content, all_mappings) if all_mappings else raw_content
 
         usage = resp.usage
         return LLMResponse(
             content=content,
-            model="claude-3-5-sonnet-20241022",
+            model=settings.CLAUDE_MODEL,
             prompt_tokens=usage.input_tokens,
             completion_tokens=usage.output_tokens,
             total_tokens=usage.input_tokens + usage.output_tokens,
@@ -121,3 +168,29 @@ class ClaudeAdapter(LLMBase):
                 return resp.status_code == 200
         except Exception:
             return False
+
+
+def _ensure_alternating(messages: List[dict]) -> List[dict]:
+    """
+    Claude API يتطلب تبادل صارم user↔assistant.
+    يدمج الرسائل المتكررة من نفس الدور إذا لزم الأمر.
+    """
+    if not messages:
+        return messages
+
+    result = [messages[0]]
+    for msg in messages[1:]:
+        if msg["role"] == result[-1]["role"]:
+            # دمج رسالتين متتاليتين من نفس الدور
+            result[-1] = {
+                "role": result[-1]["role"],
+                "content": f"{result[-1]['content']}\n\n{msg['content']}",
+            }
+        else:
+            result.append(msg)
+
+    # يجب أن تبدأ بـ user
+    if result and result[0]["role"] != "user":
+        result.insert(0, {"role": "user", "content": "."})
+
+    return result

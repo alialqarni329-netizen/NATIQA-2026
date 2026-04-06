@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { Toaster } from 'react-hot-toast'
+import ErrorBoundary from '@/components/ErrorBoundary'
 
 export const metadata: Metadata = {
   title: 'ناطقة — NATIQA Enterprise AI',
@@ -16,19 +17,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="icon" type="image/png" href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/static/logo.png`} />
       </head>
       <body style={{ margin: 0, padding: 0, background: '#060d1a' }}>
-        <Toaster
-          position="top-center"
-          toastOptions={{
-            style: {
-              background: '#0c1829',
-              color: '#ccd9ef',
-              border: '1px solid rgba(59,130,246,.25)',
-              fontFamily: "'Tajawal', sans-serif",
-              direction: 'rtl',
-            },
-          }}
-        />
-        {children}
+        <ErrorBoundary>
+          <Toaster
+            position="top-center"
+            toastOptions={{
+              style: {
+                background: '#0c1829',
+                color: '#ccd9ef',
+                border: '1px solid rgba(59,130,246,.25)',
+                fontFamily: "'Tajawal', sans-serif",
+                direction: 'rtl',
+              },
+            }}
+          />
+          {children}
+        </ErrorBoundary>
       </body>
     </html>
   )

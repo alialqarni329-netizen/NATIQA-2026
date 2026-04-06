@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles  # type: ignore
 
 from app.core.config import settings  # type: ignore
 from app.core.database import init_db, get_db
+import redis.asyncio as aioredis
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import auth, main_routes  # type: ignore
 from app.api import integration_routes  # type: ignore
@@ -25,6 +26,7 @@ from app.api import admin_routes   # type: ignore  ← Phase 1 B2B admin approva
 from app.api import admin_portal   # type: ignore  ← Phase 2 Admin Dashboard UI
 from app.api import notification_routes
 from app.api import org_routes, analytics_routes
+from app.api import metrics_routes  # type: ignore  ← Prometheus monitoring
 from app.services.trial_scheduler import create_scheduler  # type: ignore  ← Phase 3 Golden Trial
 
 log = structlog.get_logger()
@@ -57,19 +59,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ─── CORS ──────────────────────────────────────────────────────────────
+# ─── CORS ─ يُقرأ من .env عبر settings.cors_origins_list ──────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://frontend-production-043cd.up.railway.app",
-        "http://localhost:3000",
-        "https://natiqa.ai",
-        "https://www.natiqa.ai",
-    ],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
+    max_age=600,
 )
 
 # ─── Exception Handlers with CORS support ──────────────────────────────
@@ -91,27 +89,30 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     import traceback
+    import uuid as _uuid
     error_trace = traceback.format_exc()
-    log.error("Unhandled Exception", error=str(exc), path=request.url.path, traceback=error_trace)
-    
-    # Return error type and message for easier debugging for the user
-    response = JSONResponse(
-        status_code=500,
-        content={
-            "detail": "خطأ داخلي في الخادم. يرجى المحاولة لاحقاً.",
-            "debug": {
-                "error_type": type(exc).__name__,
-                "error_msg": str(exc),
-                "path": request.url.path
-            }
-        },
+    error_id = _uuid.uuid4().hex[:12]
+    log.error(
+        "Unhandled Exception",
+        error_id=error_id,
+        error=str(exc),
+        error_type=type(exc).__name__,
+        path=request.url.path,
+        traceback=error_trace,
     )
+    # في الإنتاج: لا نكشف تفاصيل الخطأ — نرجع error_id فقط للمتابعة
+    content: dict = {"detail": "خطأ داخلي في الخادم. يرجى المحاولة لاحقاً.", "error_id": error_id}
+    if settings.DEBUG:
+        content["debug"] = {
+            "error_type": type(exc).__name__,
+            "error_msg": str(exc),
+            "path": request.url.path,
+        }
+    response = JSONResponse(status_code=500, content=content)
     origin = request.headers.get("origin")
     if origin:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "*"
     return response
 
 @app.exception_handler(404)
@@ -142,6 +143,7 @@ app.include_router(agent_routes.router, prefix="/api")
 app.include_router(erp_routes.router, prefix="/api")
 app.include_router(org_routes.router, prefix="/api")
 app.include_router(analytics_routes.router, prefix="/api")
+app.include_router(metrics_routes.router, prefix="/api")
 
 # ─── Static Files ──────────────────────────────────────────────────────
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -151,30 +153,45 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 async def health(db: AsyncSession = Depends(get_db)):
     """
     Railway health check endpoint.
-    Returns 200 when the app is running and DB is reachable.
-    Returns 503 if DB is unreachable (Railway will restart the service).
+    Returns 200 when app, DB, and Redis are all reachable.
+    Returns 503 if any critical dependency is unreachable.
     """
     from sqlalchemy import text
+    import time
+
+    checks: dict = {}
+    healthy = True
+
+    # ── Database check ────────────────────────────────────────────────
     try:
+        t0 = time.monotonic()
         await db.execute(text("SELECT 1"))
-        db_status = "ok"
+        checks["database"] = {"status": "ok", "latency_ms": round((time.monotonic() - t0) * 1000)}
     except Exception as e:
         log.error("Health check DB failure", error=str(e))
-        from fastapi.responses import JSONResponse
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status":      "unhealthy",
-                "version":     settings.APP_VERSION,
-                "database":    "unreachable",
-                "environment": settings.ENVIRONMENT,
-            }
-        )
+        checks["database"] = {"status": "unreachable", "error": str(e) if settings.DEBUG else "unreachable"}
+        healthy = False
 
-    return {
-        "status":       "ok",
-        "version":      settings.APP_VERSION,
-        "environment":  settings.ENVIRONMENT,
-        "database":     db_status,
-        "debug":        settings.DEBUG,
+    # ── Redis check ───────────────────────────────────────────────────
+    try:
+        t0 = time.monotonic()
+        _redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        await _redis.ping()
+        await _redis.aclose()
+        checks["redis"] = {"status": "ok", "latency_ms": round((time.monotonic() - t0) * 1000)}
+    except Exception as e:
+        log.error("Health check Redis failure", error=str(e))
+        checks["redis"] = {"status": "unreachable", "error": str(e) if settings.DEBUG else "unreachable"}
+        healthy = False
+
+    payload = {
+        "status":      "ok" if healthy else "degraded",
+        "version":     settings.APP_VERSION,
+        "environment": settings.ENVIRONMENT,
+        "checks":      checks,
     }
+
+    if not healthy:
+        return JSONResponse(status_code=503, content={**payload, "status": "unhealthy"})
+
+    return payload

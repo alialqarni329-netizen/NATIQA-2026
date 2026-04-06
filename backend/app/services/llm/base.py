@@ -7,7 +7,7 @@ LLM Base Interface — Adapter Pattern
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
 
 
 @dataclass
@@ -24,7 +24,7 @@ class LLMResponse:
 @dataclass
 class EmbeddingResponse:
     """استجابة التضمين الموحّدة."""
-    embedding: list[float]
+    embedding: list
     model: str
     tokens: int = 0
 
@@ -42,8 +42,22 @@ class LLMBase(ABC):
         system: Optional[str] = None,
         temperature: float = 0.3,
         max_tokens: int = 2048,
+        conversation_history: Optional[List[dict]] = None,
+        trust_system: bool = False,
     ) -> LLMResponse:
-        """توليد نص من prompt."""
+        """
+        توليد نص من prompt.
+
+        المعاملات:
+            prompt: رسالة المستخدم الحالية
+            system: prompt النظام (سياق الوثائق)
+            temperature: درجة الإبداع (0.0 = حتمي، 1.0 = إبداعي)
+            max_tokens: الحد الأقصى للرموز
+            conversation_history: سجل المحادثة السابقة
+                [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
+            trust_system: عندما True، لا يُطبَّق Masking على system prompt
+                (للبيانات الداخلية المحفوظة في قاعدة البيانات)
+        """
         ...
 
     @abstractmethod
