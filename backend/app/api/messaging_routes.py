@@ -31,7 +31,7 @@ from typing import AsyncIterator, List, Optional
 
 import redis.asyncio as aioredis
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, delete, func, or_, select, update
@@ -40,6 +40,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, get_redis
+from app.core.security import decode_token
 from app.models.models import (
     Channel, ChannelMember, ChannelMessage, ChannelType,
     Notification, NotificationType, User,
@@ -447,18 +448,47 @@ async def send_message(
         "created_at": msg.created_at.isoformat(),
     }
 
-    # Notify other channel members (non-DM: only mention mentions for now)
+    # Smart notifications:
+    # • DM channels  → always notify the other participant
+    # • Group/public → only notify explicitly @mentioned users
     res_ch = await db.execute(
         select(Channel).where(Channel.id == channel_id)
-        .options(selectinload(Channel.members))
+        .options(selectinload(Channel.members).selectinload(ChannelMember.user))
     )
     ch = res_ch.scalar_one_or_none()
     if ch:
+        is_dm = ch.channel_type == ChannelType.DIRECT
+
+        # Extract @mentions from content: words starting with @
+        import re as _re
+        mentioned_names = {
+            m.lower() for m in _re.findall(r"@(\w+)", body.content)
+        }
+
         for cm in ch.members:
-            if cm.user_id != user.id:
+            if cm.user_id == user.id:
+                continue  # never notify yourself
+
+            if is_dm:
+                # DMs: always notify
+                notify = True
+            else:
+                # Group channels: only if @mentioned by full_name or part of it
+                member_name = (cm.user.full_name or "").lower().replace(" ", "")
+                notify = any(
+                    mentioned_names and m in member_name
+                    for m in mentioned_names
+                )
+
+            if notify:
+                title = (
+                    f"رسالة مباشرة من {user.full_name}"
+                    if is_dm
+                    else f"تم ذكرك في «{ch.name or 'القناة'}»"
+                )
                 await create_notification(
                     db, cm.user_id, NotificationType.INFO,
-                    f"رسالة جديدة في «{ch.name or 'المحادثة'}»",
+                    title,
                     f"{user.full_name}: {body.content[:80]}{'...' if len(body.content) > 80 else ''}",
                 )
 
@@ -722,9 +752,54 @@ async def list_dm_threads(
 # SSE — Real-time event stream
 # ──────────────────────────────────────────────────────────────────────
 
+async def _get_user_from_token_query(
+    token: Optional[str] = Query(None, alias="token"),
+    db: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
+) -> User:
+    """
+    Auth dependency for SSE endpoint.
+    EventSource (browser API) cannot send Authorization headers,
+    so the JWT is passed as ?token=<access_token> query parameter instead.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or missing token",
+    )
+    if not token:
+        raise credentials_exception
+
+    payload = decode_token(token)
+    if not payload or payload.get("type") != "access":
+        raise credentials_exception
+
+    # Check blacklist
+    blacklisted = await redis.get(f"blacklist:{token[:16]}")
+    if blacklisted:
+        raise credentials_exception
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise credentials_exception
+
+    try:
+        uid = uuid.UUID(user_id)
+    except (ValueError, TypeError):
+        raise credentials_exception
+
+    from sqlalchemy.orm import selectinload as _sel
+    result = await db.execute(
+        select(User).options(_sel(User.organization)).where(User.id == uid)
+    )
+    user = result.scalar_one_or_none()
+    if not user or not user.is_active:
+        raise credentials_exception
+    return user
+
+
 @router.get("/events/stream")
 async def sse_stream(
-    user: User = Depends(get_current_user),
+    user: User = Depends(_get_user_from_token_query),
     redis: aioredis.Redis = Depends(get_redis),
 ):
     """

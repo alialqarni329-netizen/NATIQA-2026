@@ -286,7 +286,12 @@ async def reject_user(
     )
     await db.commit()
 
-    # ── TODO: أرسل إيميل رفض مع السبب عبر Resend.com ──────────────
+    # ── Send rejection email with reason ──────────────────────────
+    await _send_rejection_email(
+        target.email,
+        target.business_name or target.full_name,
+        body.reason,
+    )
     log.info(
         "Admin rejected user",
         admin_id=str(current.id),
@@ -551,4 +556,107 @@ async def _send_approval_email(email: str, business_name: str) -> None:
         log.info("Approval email sent via admin_routes", email=email)
     except Exception as exc:
         log.error("Approval email delivery failed", email=email, error=str(exc))
+
+
+async def _send_rejection_email(email: str, business_name: str, reason: str) -> None:
+    """Send account-rejection notification email via Resend (or log in debug mode)."""
+    from app.core.config import settings
+
+    html = f"""<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>تحديث حالة طلبك في ناطقة</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:'Tajawal',Arial,sans-serif;direction:rtl;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+         style="background:#f1f5f9;min-height:100vh;padding:32px 16px;">
+    <tr><td align="center">
+      <table width="580" cellpadding="0" cellspacing="0"
+             style="max-width:580px;background:#ffffff;border-radius:16px;
+                    overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,0.12);">
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#1e3a5f 0%,#0f2040 100%);
+                     padding:32px 40px;text-align:center;">
+            <div style="font-size:28px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">
+              ناطقة
+            </div>
+            <div style="font-size:13px;color:#93c5fd;margin-top:4px;">
+              منصة الذكاء الاصطناعي المؤسسي
+            </div>
+          </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+          <td style="padding:40px;">
+            <h2 style="font-size:22px;color:#1e293b;margin:0 0 16px;">
+              مرحباً {business_name}،
+            </h2>
+            <p style="font-size:16px;color:#475569;line-height:1.7;margin:0 0 24px;">
+              شكراً لتسجيلك في منصة ناطقة. بعد مراجعة طلبك، نأسف لإبلاغك
+              بأنه لم يتم قبوله في الوقت الحالي.
+            </p>
+            <div style="background:#fff1f2;border-right:4px solid #f43f5e;
+                        border-radius:8px;padding:16px 20px;margin-bottom:24px;">
+              <p style="font-size:14px;font-weight:700;color:#be123c;margin:0 0 6px;">
+                سبب الرفض:
+              </p>
+              <p style="font-size:15px;color:#1e293b;margin:0;line-height:1.6;">
+                {reason}
+              </p>
+            </div>
+            <p style="font-size:15px;color:#475569;line-height:1.7;margin:0 0 24px;">
+              إذا كنت تعتقد أن هناك خطأً أو لديك استفسار، يمكنك التواصل معنا
+              عبر البريد الإلكتروني للدعم.
+            </p>
+            <div style="text-align:center;">
+              <a href="mailto:support@natiqa.ai"
+                 style="display:inline-block;background:#1e3a5f;color:#ffffff;
+                        font-size:15px;font-weight:700;padding:14px 32px;
+                        border-radius:10px;text-decoration:none;">
+                تواصل مع الدعم
+              </a>
+            </div>
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td style="background:#f8fafc;padding:20px 40px;text-align:center;
+                     border-top:1px solid #e2e8f0;">
+            <p style="font-size:12px;color:#94a3b8;margin:0;">
+              © 2026 ناطقة — جميع الحقوق محفوظة
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+
+    if not settings.ENABLE_REAL_EMAIL:
+        log.info(
+            "DEBUG REJECTION EMAIL — ENABLE_REAL_EMAIL=False",
+            email=email, business_name=business_name, reason=reason,
+        )
+        return
+
+    if not settings.RESEND_API_KEY:
+        log.error("RESEND_API_KEY not set — rejection email not sent", email=email)
+        return
+
+    try:
+        import resend
+        resend.api_key = settings.RESEND_API_KEY
+        resend.Emails.send({
+            "from":    settings.RESEND_FROM_EMAIL,
+            "to":      [email],
+            "subject": "تحديث حالة طلبك في ناطقة",
+            "html":    html,
+        })
+        log.info("Rejection email sent via admin_routes", email=email)
+    except Exception as exc:
+        log.error("Rejection email delivery failed", email=email, error=str(exc))
 

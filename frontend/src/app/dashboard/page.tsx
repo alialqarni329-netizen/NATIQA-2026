@@ -1529,6 +1529,8 @@ function ExportStudioView() {
   const [previewUrl, setPreviewUrl]   = useState<string | null>(null)
   const [jsonData, setJsonData]       = useState<any>(null)
   const [xlsRows, setXlsRows]         = useState<{ headers: string[]; rows: any[][] } | null>(null)
+  const [wordHtml, setWordHtml]       = useState<string | null>(null)
+  const [pptSlides, setPptSlides]     = useState<number>(0)
   const fileRef = useRef<HTMLInputElement>(null)
   const progressRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -1605,6 +1607,28 @@ function ExportStudioView() {
         } catch { setXlsRows(null) }
       }
 
+      // Word — convert DOCX → HTML via mammoth.js
+      if (data.format === 'word') {
+        try {
+          const mammoth = await import('mammoth')
+          const arrayBuffer = byteArr.buffer as ArrayBuffer
+          const { value: html } = await mammoth.convertToHtml({ arrayBuffer })
+          setWordHtml(html || null)
+        } catch { setWordHtml(null) }
+      }
+
+      // PowerPoint — count slides by scanning PPTX XML zip entries
+      if (data.format === 'powerpoint') {
+        try {
+          const JSZip = (await import('jszip')).default
+          const zip = await JSZip.loadAsync(byteArr)
+          const slideCount = Object.keys(zip.files).filter(
+            name => /^ppt\/slides\/slide\d+\.xml$/.test(name)
+          ).length
+          setPptSlides(slideCount)
+        } catch { setPptSlides(0) }
+      }
+
       setTimeout(() => setPhase('preview'), 400)
     } catch (e: any) {
       stopFakeProgress()
@@ -1625,7 +1649,7 @@ function ExportStudioView() {
   const handleReset = () => {
     setPhase('upload'); setFile(null); setResult(null)
     if (previewUrl) { URL.revokeObjectURL(previewUrl); setPreviewUrl(null) }
-    setJsonData(null); setXlsRows(null); setProgress(0)
+    setJsonData(null); setXlsRows(null); setWordHtml(null); setPptSlides(0); setProgress(0)
   }
 
   const onDrop = (e: React.DragEvent) => {
@@ -1900,26 +1924,111 @@ function ExportStudioView() {
           </div>
         )}
 
-        {/* Word / PowerPoint — download only */}
-        {(result?.format === 'word' || result?.format === 'powerpoint') && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 20 }}>
-            <div style={{ fontSize: 64 }}>{selFormat?.icon}</div>
-            <div style={{ fontWeight: 900, fontSize: 18, color: '#ccd9ef' }}>تم توليد الملف بنجاح!</div>
-            <div style={{ fontSize: 13, color: '#5b7fa6', maxWidth: 360, textAlign: 'center', lineHeight: 1.7 }}>
-              ملف <strong style={{ color: selFormat?.color }}>{selFormat?.label}</strong> جاهز للتحميل.
-              سيفتح تلقائياً في {result.format === 'word' ? 'Microsoft Word أو Google Docs' : 'PowerPoint أو Google Slides'}.
+        {/* Word — mammoth HTML preview */}
+        {result?.format === 'word' && (
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            {wordHtml ? (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', background: 'rgba(30,64,115,.5)', borderBottom: '1px solid rgba(59,130,246,.15)', flexShrink: 0 }}>
+                  <span style={{ fontSize: 12, color: '#5b7fa6', fontWeight: 600 }}>معاينة المستند — {result.filename}</span>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={handleDownload}
+                      style={{ padding: '6px 16px', borderRadius: 8, background: 'linear-gradient(135deg,#1e40af,#3b82f6)', border: 'none', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                      ⬇ تحميل
+                    </button>
+                    <button onClick={handleReset}
+                      style={{ padding: '6px 12px', borderRadius: 8, background: 'rgba(59,130,246,.08)', border: '1px solid rgba(59,130,246,.18)', color: '#5b7fa6', fontSize: 12, cursor: 'pointer' }}>
+                      ✕
+                    </button>
+                  </div>
+                </div>
+                <div style={{ flex: 1, overflow: 'auto', padding: '24px 32px', background: '#ffffff', direction: 'rtl' }}
+                  dangerouslySetInnerHTML={{ __html: wordHtml }}
+                />
+              </>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 20 }}>
+                <div style={{ fontSize: 64 }}>{selFormat?.icon}</div>
+                <div style={{ fontWeight: 900, fontSize: 18, color: '#ccd9ef' }}>تم توليد الملف بنجاح!</div>
+                <div style={{ fontSize: 13, color: '#5b7fa6', textAlign: 'center', lineHeight: 1.7 }}>
+                  ملف <strong style={{ color: selFormat?.color }}>Word</strong> جاهز — سيفتح في Microsoft Word أو Google Docs.
+                </div>
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <button onClick={handleDownload}
+                    style={{ padding: '12px 28px', borderRadius: 12, background: 'linear-gradient(135deg,#1e40af,#3b82f6)', border: '1px solid #3b82f6', color: '#fff', fontSize: 14, fontWeight: 800, cursor: 'pointer', fontFamily: "'Tajawal'" }}>
+                    ⬇ تحميل الملف
+                  </button>
+                  <button onClick={handleReset}
+                    style={{ padding: '12px 20px', borderRadius: 12, background: 'rgba(59,130,246,.07)', border: '1px solid rgba(59,130,246,.18)', color: '#5b7fa6', fontSize: 14, cursor: 'pointer', fontFamily: "'Tajawal'" }}>
+                    ↑ ملف آخر
+                  </button>
+                </div>
+                <div style={{ fontSize: 11, color: '#2a4a6e' }}>{result?.filename} · {fmtSize(result.size_bytes)}</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* PowerPoint — slide deck preview UI */}
+        {result?.format === 'powerpoint' && (
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', background: 'rgba(30,64,115,.5)', borderBottom: '1px solid rgba(59,130,246,.15)', flexShrink: 0 }}>
+              <span style={{ fontSize: 12, color: '#5b7fa6', fontWeight: 600 }}>
+                {pptSlides > 0 ? `${pptSlides} شريحة` : 'عرض تقديمي'} — {result.filename}
+              </span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={handleDownload}
+                  style={{ padding: '6px 16px', borderRadius: 8, background: 'linear-gradient(135deg,#ea580c,#f97316)', border: 'none', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                  ⬇ تحميل
+                </button>
+                <button onClick={handleReset}
+                  style={{ padding: '6px 12px', borderRadius: 8, background: 'rgba(59,130,246,.08)', border: '1px solid rgba(59,130,246,.18)', color: '#5b7fa6', fontSize: 12, cursor: 'pointer' }}>
+                  ✕
+                </button>
+              </div>
             </div>
-            <div style={{ display: 'flex', gap: 12 }}>
-              <button onClick={handleDownload}
-                style={{ padding: '12px 28px', borderRadius: 12, background: 'linear-gradient(135deg,#1e40af,#3b82f6)', border: '1px solid #3b82f6', color: '#fff', fontSize: 14, fontWeight: 800, cursor: 'pointer', fontFamily: "'Tajawal'" }}>
-                ⬇ تحميل الملف
-              </button>
-              <button onClick={handleReset}
-                style={{ padding: '12px 20px', borderRadius: 12, background: 'rgba(59,130,246,.07)', border: '1px solid rgba(59,130,246,.18)', color: '#5b7fa6', fontSize: 14, cursor: 'pointer', fontFamily: "'Tajawal'" }}>
-                ↑ ملف آخر
-              </button>
+            <div style={{ flex: 1, overflow: 'auto', padding: 24 }}>
+              {/* Slide thumbnail grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 }}>
+                {Array.from({ length: Math.max(pptSlides, 1) }).map((_, i) => (
+                  <div key={i} style={{
+                    aspectRatio: '16/9',
+                    background: 'linear-gradient(135deg,#060d1a 0%,#0d1f3c 100%)',
+                    border: '1px solid rgba(59,130,246,.2)',
+                    borderRadius: 10,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    position: 'relative',
+                    overflow: 'hidden',
+                  }}>
+                    {/* Slide number badge */}
+                    <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 10, color: '#3b82f6', fontWeight: 700 }}>
+                      {i + 1}
+                    </div>
+                    {/* Decorative lines simulating slide content */}
+                    <div style={{ width: '70%', height: 6, borderRadius: 4, background: 'rgba(59,130,246,.35)', marginBottom: 4 }} />
+                    <div style={{ width: '55%', height: 4, borderRadius: 4, background: 'rgba(59,130,246,.2)' }} />
+                    <div style={{ width: '60%', height: 4, borderRadius: 4, background: 'rgba(59,130,246,.15)', marginTop: 8 }} />
+                    <div style={{ width: '45%', height: 4, borderRadius: 4, background: 'rgba(59,130,246,.1)' }} />
+                    {/* ناطقة watermark */}
+                    <div style={{ position: 'absolute', bottom: 8, left: 10, fontSize: 9, color: 'rgba(59,130,246,.3)', fontWeight: 700 }}>
+                      ناطقة
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 20, textAlign: 'center', padding: '16px 20px', background: 'rgba(249,115,22,.04)', border: '1px solid rgba(249,115,22,.15)', borderRadius: 12 }}>
+                <div style={{ fontSize: 13, color: '#fb923c', fontWeight: 700, marginBottom: 6 }}>
+                  افتح في PowerPoint أو Google Slides للمعاينة الكاملة
+                </div>
+                <div style={{ fontSize: 11, color: '#5b7fa6' }}>
+                  {result.filename} · {fmtSize(result.size_bytes)} · {pptSlides > 0 ? `${pptSlides} شريحة` : ''}
+                </div>
+              </div>
             </div>
-            <div style={{ fontSize: 11, color: '#2a4a6e' }}>{result?.filename} · {result ? fmtSize(result.size_bytes) : ''}</div>
           </div>
         )}
       </div>

@@ -125,14 +125,48 @@ class BaseERPConnector:
         )
 
     async def fetch(self, data_type: ERPDataType, params: dict | None = None) -> ERPResult:
-        raise NotImplementedError
+        """
+        Subclasses must override this method.
+        Returns a structured error response instead of raising NotImplementedError
+        so callers always get a safe ERPResult.
+        """
+        system = getattr(self.config, "system", ERPSystem.CUSTOM)
+        sys_name = system.value if hasattr(system, "value") else str(system)
+        return ERPResult(
+            success=False,
+            system=sys_name,
+            data_type=data_type.value if hasattr(data_type, "value") else str(data_type),
+            data=None,
+            error=f"جلب البيانات غير مُنفَّذ لهذا النوع من الأنظمة ({sys_name}). "
+                  "يرجى استخدام GenericRESTConnector أو إضافة Connector مخصص.",
+        )
 
     async def execute_action(self, action: str, params: dict) -> ERPResult:
-        """تنفيذ إجراء (submit leave, approve PO, etc.)."""
-        raise NotImplementedError
+        """
+        Subclasses must override this method.
+        Returns a structured error response instead of raising NotImplementedError.
+        """
+        system = getattr(self.config, "system", ERPSystem.CUSTOM)
+        sys_name = system.value if hasattr(system, "value") else str(system)
+        return ERPResult(
+            success=False,
+            system=sys_name,
+            data_type=action,
+            data=None,
+            error=f"تنفيذ الإجراءات غير مُنفَّذ لهذا النوع من الأنظمة ({sys_name}). "
+                  "يرجى استخدام GenericRESTConnector أو إضافة Connector مخصص.",
+        )
 
     async def health(self) -> bool:
-        raise NotImplementedError
+        """
+        Subclasses must override this method.
+        Returns False (unhealthy) instead of raising NotImplementedError.
+        """
+        log.warning(
+            "health() not implemented for connector",
+            system=getattr(self.config, "system", "unknown"),
+        )
+        return False
 
 
 # ═══════════════════════════════════════════════════════════
