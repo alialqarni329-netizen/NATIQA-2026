@@ -49,3 +49,4 @@ Thumbs.db
 # ── Test artefacts ───────────────────────────────────────
 htmlcov/
 .coverage
+frontend/tsconfig.tsbuildinfo

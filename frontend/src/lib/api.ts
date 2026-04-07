@@ -209,3 +209,68 @@ export const orgApi = {
 export const analyticsApi = {
   getSummary: (days: number = 30) => api.get(`/analytics/summary?days=${days}`),
 }
+
+// ─── Messaging — Channels + DMs ───────────────────────────────────────
+export const messagingApi = {
+  // Channels (groups)
+  listChannels: () => api.get('/channels'),
+  createChannel: (data: { name: string; description?: string; channel_type?: string; member_ids?: string[] }) =>
+    api.post('/channels', data),
+  getChannel: (id: string) => api.get(`/channels/${id}`),
+  updateChannel: (id: string, data: { name?: string; description?: string }) =>
+    api.patch(`/channels/${id}`, data),
+  deleteChannel: (id: string) => api.delete(`/channels/${id}`),
+  addMembers: (id: string, user_ids: string[]) => api.post(`/channels/${id}/members`, { user_ids }),
+  removeMember: (channelId: string, userId: string) =>
+    api.delete(`/channels/${channelId}/members/${userId}`),
+
+  // Messages
+  listMessages: (channelId: string, before?: string, limit = 50) =>
+    api.get(`/channels/${channelId}/messages`, { params: { before, limit } }),
+  sendMessage: (channelId: string, content: string, refDocId?: string, refProjectId?: string) =>
+    api.post(`/channels/${channelId}/messages`, { content, ref_doc_id: refDocId, ref_project_id: refProjectId }),
+  editMessage: (channelId: string, messageId: string, content: string) =>
+    api.patch(`/channels/${channelId}/messages/${messageId}`, { content }),
+  deleteMessage: (channelId: string, messageId: string) =>
+    api.delete(`/channels/${channelId}/messages/${messageId}`),
+  reactToMessage: (channelId: string, messageId: string, emoji: string) =>
+    api.post(`/channels/${channelId}/messages/${messageId}/react`, { emoji }),
+  markChannelRead: (channelId: string) => api.post(`/channels/${channelId}/read`),
+
+  // Direct Messages
+  openDm: (targetUserId: string) => api.post(`/dm/${targetUserId}`),
+  listDms: () => api.get('/dm'),
+
+  // SSE stream — returns the base URL for EventSource
+  getStreamUrl: () => `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost/api'}/events/stream`,
+}
+
+// ─── Smart Export Studio ───────────────────────────────────────────────────
+export const exportApi = {
+  getFormats: () => api.get('/export/formats'),
+
+  /** Download generated file as blob */
+  generate: (file: File, outputFormat: string, exportType: string) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('output_format', outputFormat)
+    fd.append('export_type', exportType)
+    return api.post('/export/generate', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      responseType: 'blob',
+      timeout: 300_000, // 5 min — AI generation can take time
+    })
+  },
+
+  /** Preview: returns base64 + metadata */
+  preview: (file: File, outputFormat: string, exportType: string) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('output_format', outputFormat)
+    fd.append('export_type', exportType)
+    return api.post('/export/preview', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300_000,
+    })
+  },
+}
