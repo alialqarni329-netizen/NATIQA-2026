@@ -62,6 +62,8 @@ type Org = {
 export default function AdminDashboard() {
     const router = useRouter()
     const hydrated = useAuthHydrated()
+    // ✅ FIXED: destructure user + isAdmin from store (were missing — caused ReferenceError → white page)
+    const { user, isAdmin } = useAuthStore()
     const [stats, setStats] = useState<Stats | null>(null)
     const [orgs, setOrgs] = useState<Org[]>([])
     const [loading, setLoading] = useState(true)
@@ -69,10 +71,27 @@ export default function AdminDashboard() {
     const [showExportMenu, setShowExportMenu] = useState(false)
     const [view, setView] = useState<'overview' | 'analytics'>('overview')
 
+    // ✅ FIXED: moved fetchData before useEffect to avoid temporal dead zone
+    const fetchData = async () => {
+        setLoading(true)
+        try {
+            const [sRes, oRes] = await Promise.all([
+                adminApi.stats(),
+                adminApi.listOrganizations()
+            ])
+            setStats(sRes.data)
+            setOrgs(oRes.data?.organizations ?? oRes.data ?? [])
+        } catch (err: any) {
+            toast.error(err?.response?.data?.detail || 'فشل تحميل بيانات الإدارة')
+        } finally {
+            setLoading(false)
+        }
+    }
+
     useEffect(() => {
         if (!hydrated) return
         if (!isAdmin()) {
-            toast.error('Access Denied')
+            toast.error('غير مصرح لك بالوصول')
             router.push('/dashboard')
             return
         }
@@ -85,22 +104,6 @@ export default function AdminDashboard() {
                 <div className="w-10 h-10 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
             </div>
         )
-    }
-
-    const fetchData = async () => {
-        setLoading(true)
-        try {
-            const [sRes, oRes] = await Promise.all([
-                adminApi.stats(),
-                adminApi.listOrganizations()
-            ])
-            setStats(sRes.data)
-            setOrgs(oRes.data)
-        } catch (err) {
-            toast.error('Failed to load admin data')
-        } finally {
-            setLoading(false)
-        }
     }
 
     const handleExport = async (format: 'word' | 'pptx' | 'powerbi') => {

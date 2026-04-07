@@ -209,7 +209,14 @@ function Dashboard() {
   )
 
   const loadProjects = useCallback(async () => {
-    try { const { data } = await projectsApi.list(); setProjs(data); setProj(p => p ?? data[0] ?? null) } catch { }
+    try {
+      const { data } = await projectsApi.list()
+      setProjs(data)
+      setProj(p => p ?? data[0] ?? null)
+    } catch (e: any) {
+      // Only show error if not an auth issue (auth errors are handled by the interceptor)
+      if (e?.response?.status !== 401) toast.error('تعذّر تحميل المشاريع')
+    }
   }, [])
   useEffect(() => { loadProjects() }, [loadProjects])
 
@@ -823,7 +830,9 @@ function KnowView({ proj, projs, setProj, activeDept }: any) {
 
   const loadDocs = useCallback(async () => {
     if (!proj) return; setLoading(true)
-    try { const { data } = await docsApi.list(proj.id); setDocs(data) } catch { } finally { setLoading(false) }
+    try { const { data } = await docsApi.list(proj.id); setDocs(data) } catch (e: any) {
+      if (e?.response?.status !== 401) toast.error('تعذّر تحميل الملفات')
+    } finally { setLoading(false) }
   }, [proj?.id])
   useEffect(() => { loadDocs() }, [loadDocs])
 
@@ -1516,6 +1525,17 @@ type ExportFormat = {
 
 type ExportPhase = 'upload' | 'processing' | 'preview'
 
+/** Strip script tags and inline event handlers from mammoth-generated HTML to prevent XSS. */
+function _sanitizeWordHtml(html: string | null): string {
+  if (!html) return ''
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script\s*>/gi, '')
+    .replace(/\son\w+\s*=\s*(['"])[^'"]*\1/gi, '')
+    .replace(/\son\w+\s*=\s*[^\s>]+/gi, '')
+    .replace(/href\s*=\s*(['"])\s*javascript:[^'"]*\1/gi, 'href="#"')
+    .replace(/href\s*=\s*javascript:[^\s>]+/gi, 'href="#"')
+}
+
 function ExportStudioView() {
   const [phase, setPhase]             = useState<ExportPhase>('upload')
   const [formats, setFormats]         = useState<ExportFormat[]>([])
@@ -1943,7 +1963,7 @@ function ExportStudioView() {
                   </div>
                 </div>
                 <div style={{ flex: 1, overflow: 'auto', padding: '24px 32px', background: '#ffffff', direction: 'rtl' }}
-                  dangerouslySetInnerHTML={{ __html: wordHtml }}
+                  dangerouslySetInnerHTML={{ __html: _sanitizeWordHtml(wordHtml) }}
                 />
               </>
             ) : (
