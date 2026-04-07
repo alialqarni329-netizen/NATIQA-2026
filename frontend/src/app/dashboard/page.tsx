@@ -3,7 +3,7 @@ import dynamic from 'next/dynamic'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuthStore, useAuthHydrated } from '@/lib/store'
-import { dashApi, projectsApi, docsApi, chatApi, docStatusApi, autoOrganizerApi, orgApi, messagingApi } from '@/lib/api'
+import { dashApi, projectsApi, docsApi, chatApi, docStatusApi, autoOrganizerApi, orgApi, messagingApi, exportApi } from '@/lib/api'
 import toast from 'react-hot-toast'
 import NotificationBell from '@/components/NotificationBell'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
@@ -223,6 +223,7 @@ function Dashboard() {
   const navItems = [
     { id: 'dash',      icon: '▣',  label: 'لوحة التحكم' },
     { id: 'chat',      icon: '◉',  label: 'المحادثة الذكية' },
+    { id: 'export',    icon: '✦',  label: 'استوديو التصدير' },
     { id: 'messaging', icon: '✉',  label: 'الرسائل الداخلية' },
     { id: 'know',      icon: '◈',  label: 'قاعدة المعرفة' },
     { id: 'projs',     icon: '⊞',  label: 'المشاريع' },
@@ -398,6 +399,7 @@ function Dashboard() {
           {view === 'dash' && <DashView projs={projs} setView={setView} setProj={setProj} />}
           {view === 'analytics' && <DashboardAnalytics />}
           {view === 'chat' && <ChatView proj={proj} projs={projs} setProj={setProj} activeDept={activeDept} setActiveDept={setActiveDept} setView={setView} loadProjects={loadProjects} />}
+          {view === 'export' && <ExportStudioView />}
           {view === 'messaging' && <MessagingView />}
           {view === 'know' && <KnowView proj={proj} projs={projs} setProj={setProj} activeDept={activeDept} />}
           {view === 'projs' && <ProjsView projs={projs} setProjs={setProjs} setProj={setProj} setView={setView} loadProjects={loadProjects} />}
@@ -1500,6 +1502,427 @@ function MessagingView() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/* ══ EXPORT STUDIO ══════════════════════════════════════════════════ */
+
+type ExportFormat = {
+  id: string; label: string; label_ar: string; icon: string
+  extension: string; mime: string; export_types: string[]
+  preview: string; color: string
+}
+
+type ExportPhase = 'upload' | 'processing' | 'preview'
+
+function ExportStudioView() {
+  const [phase, setPhase]             = useState<ExportPhase>('upload')
+  const [formats, setFormats]         = useState<ExportFormat[]>([])
+  const [selFormat, setSelFormat]     = useState<ExportFormat | null>(null)
+  const [selType, setSelType]         = useState<string>('')
+  const [dragOver, setDragOver]       = useState(false)
+  const [file, setFile]               = useState<File | null>(null)
+  const [progress, setProgress]       = useState(0)
+  const [progressMsg, setProgressMsg] = useState('')
+  const [result, setResult]           = useState<{ b64: string; mime: string; filename: string; format: string; size_bytes: number } | null>(null)
+  const [previewUrl, setPreviewUrl]   = useState<string | null>(null)
+  const [jsonData, setJsonData]       = useState<any>(null)
+  const [xlsRows, setXlsRows]         = useState<{ headers: string[]; rows: any[][] } | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const progressRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Load formats on mount
+  useEffect(() => {
+    exportApi.getFormats().then(r => {
+      setFormats(r.data.formats)
+      setSelFormat(r.data.formats[0])
+      setSelType(r.data.formats[0]?.export_types[0] || '')
+    }).catch(() => {})
+  }, [])
+
+  // Set selType when format changes
+  useEffect(() => {
+    if (selFormat?.export_types.length) setSelType(selFormat.export_types[0])
+  }, [selFormat?.id])
+
+  // Cleanup blob URLs
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl) }, [previewUrl])
+
+  const startFakeProgress = () => {
+    setProgress(0)
+    const steps = [
+      [15, 'استخراج النص من الملف...'],
+      [35, 'تحليل المحتوى بالذكاء الاصطناعي...'],
+      [60, 'بناء الهيكل وتنظيم البيانات...'],
+      [80, 'توليد الملف بالصيغة المطلوبة...'],
+      [92, 'تشطيب التنسيق والتصميم...'],
+    ]
+    let i = 0
+    progressRef.current = setInterval(() => {
+      if (i < steps.length) {
+        setProgress(steps[i][0] as number)
+        setProgressMsg(steps[i][1] as string)
+        i++
+      }
+    }, 1800)
+  }
+
+  const stopFakeProgress = () => {
+    if (progressRef.current) clearInterval(progressRef.current)
+    setProgress(100)
+    setProgressMsg('اكتمل التوليد!')
+  }
+
+  const handleGenerate = async () => {
+    if (!file || !selFormat || !selType) return
+    setPhase('processing')
+    startFakeProgress()
+
+    try {
+      const { data } = await exportApi.preview(file, selFormat.id, selType)
+      stopFakeProgress()
+      setResult(data)
+
+      // Build preview
+      const byteArr = Uint8Array.from(atob(data.base64), c => c.charCodeAt(0))
+      const blob = new Blob([byteArr], { type: data.mime })
+      const url = URL.createObjectURL(blob)
+      setPreviewUrl(url)
+
+      if (data.format === 'powerbi') {
+        try { setJsonData(JSON.parse(atob(data.base64))) } catch { setJsonData(null) }
+      }
+      if (data.format === 'excel') {
+        try {
+          const XLSX = await import('xlsx')
+          const wb = XLSX.read(byteArr, { type: 'array' })
+          const ws = wb.Sheets[wb.SheetNames[0]]
+          const arr: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+          const headers = (arr[0] || []).map(String)
+          const rows = arr.slice(1).filter((r: any[]) => r.some((v: any) => v !== ''))
+          setXlsRows({ headers, rows })
+        } catch { setXlsRows(null) }
+      }
+
+      setTimeout(() => setPhase('preview'), 400)
+    } catch (e: any) {
+      stopFakeProgress()
+      toast.error(e.response?.data?.detail || 'فشل التوليد، حاول مجدداً')
+      setPhase('upload')
+    }
+  }
+
+  const handleDownload = () => {
+    if (!result || !previewUrl) return
+    const a = document.createElement('a')
+    a.href = previewUrl
+    a.download = result.filename
+    a.click()
+    toast.success(`تم تحميل ${result.filename}`)
+  }
+
+  const handleReset = () => {
+    setPhase('upload'); setFile(null); setResult(null)
+    if (previewUrl) { URL.revokeObjectURL(previewUrl); setPreviewUrl(null) }
+    setJsonData(null); setXlsRows(null); setProgress(0)
+  }
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault(); setDragOver(false)
+    const f = e.dataTransfer.files[0]
+    if (f) setFile(f)
+  }
+
+  const fmtSize = (b: number) => b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1024 / 1024).toFixed(2)} MB`
+
+  // ── PHASE: UPLOAD ──────────────────────────────────────────────────────
+  if (phase === 'upload') return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 820, margin: '0 auto', padding: '4px 0' }}>
+      {/* Header */}
+      <div style={{ textAlign: 'center', paddingBottom: 4 }}>
+        <div style={{ fontSize: 44, marginBottom: 8 }}>✦</div>
+        <div style={{ fontWeight: 900, fontSize: 22, color: '#ccd9ef', letterSpacing: '.02em' }}>استوديو التصدير الذكي</div>
+        <div style={{ fontSize: 13, color: '#5b7fa6', marginTop: 6 }}>ارفع ملفك، اختر الصيغة، واحصل على تقرير احترافي بالذكاء الاصطناعي</div>
+      </div>
+
+      {/* Drop zone */}
+      <div
+        onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={onDrop}
+        onClick={() => fileRef.current?.click()}
+        style={{
+          border: `2px dashed ${dragOver ? '#3b82f6' : file ? '#10b981' : 'rgba(59,130,246,.25)'}`,
+          borderRadius: 16, padding: '36px 24px', textAlign: 'center', cursor: 'pointer',
+          background: dragOver ? 'rgba(59,130,246,.06)' : file ? 'rgba(16,185,129,.04)' : 'rgba(6,13,26,.6)',
+          transition: 'all .2s',
+        }}>
+        <input ref={fileRef} type="file" style={{ display: 'none' }}
+          accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.pptx,.txt,.md"
+          onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); e.target.value = '' }} />
+        {file ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
+            <span style={{ fontSize: 36 }}>📎</span>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontWeight: 800, fontSize: 15, color: '#10b981' }}>{file.name}</div>
+              <div style={{ fontSize: 11, color: '#5b7fa6', marginTop: 3 }}>{fmtSize(file.size)}</div>
+            </div>
+            <button onClick={e => { e.stopPropagation(); setFile(null) }}
+              style={{ background: 'rgba(239,68,68,.1)', border: '1px solid rgba(239,68,68,.3)', borderRadius: 8, color: '#f87171', fontSize: 13, padding: '4px 10px', cursor: 'pointer' }}>
+              ✕
+            </button>
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 40, marginBottom: 10, opacity: .6 }}>📂</div>
+            <div style={{ fontSize: 14, color: '#5b7fa6', fontWeight: 700 }}>اسحب ملفك هنا أو انقر للاختيار</div>
+            <div style={{ fontSize: 11, color: '#2a4a6e', marginTop: 6 }}>PDF · DOCX · XLSX · CSV · PPTX · TXT</div>
+          </>
+        )}
+      </div>
+
+      {/* Format selector */}
+      <div>
+        <div style={{ fontSize: 12, color: '#5b7fa6', fontWeight: 700, marginBottom: 10, letterSpacing: '.06em' }}>اختر صيغة التصدير</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 10 }}>
+          {formats.map(f => (
+            <button key={f.id} onClick={() => setSelFormat(f)}
+              style={{
+                padding: '14px 8px', borderRadius: 12, cursor: 'pointer', textAlign: 'center',
+                background: selFormat?.id === f.id ? `${f.color}18` : 'rgba(6,13,26,.7)',
+                border: `1.5px solid ${selFormat?.id === f.id ? f.color : 'rgba(59,130,246,.12)'}`,
+                transition: 'all .18s',
+              }}>
+              <div style={{ fontSize: 24, marginBottom: 6 }}>{f.icon}</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: selFormat?.id === f.id ? f.color : '#ccd9ef' }}>{f.label_ar}</div>
+              <div style={{ fontSize: 9, color: '#3a5472', marginTop: 2 }}>.{f.extension}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Export type selector */}
+      {selFormat && (
+        <div>
+          <div style={{ fontSize: 12, color: '#5b7fa6', fontWeight: 700, marginBottom: 10, letterSpacing: '.06em' }}>نوع التصدير</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {selFormat.export_types.map(t => (
+              <button key={t} onClick={() => setSelType(t)}
+                style={{
+                  padding: '9px 18px', borderRadius: 20, fontSize: 13, cursor: 'pointer', fontFamily: "'Tajawal'",
+                  background: selType === t ? 'rgba(59,130,246,.15)' : 'rgba(6,13,26,.7)',
+                  border: `1px solid ${selType === t ? '#3b82f6' : 'rgba(59,130,246,.15)'}`,
+                  color: selType === t ? '#7eb3f8' : '#5b7fa6',
+                  fontWeight: selType === t ? 800 : 600, transition: 'all .15s',
+                }}>
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Generate button */}
+      <button
+        onClick={handleGenerate}
+        disabled={!file || !selFormat || !selType}
+        style={{
+          padding: '16px 0', borderRadius: 14, fontSize: 15, fontWeight: 800, fontFamily: "'Tajawal'",
+          cursor: file && selFormat ? 'pointer' : 'not-allowed',
+          background: file && selFormat ? 'linear-gradient(135deg,#1e40af,#3b82f6)' : 'rgba(6,13,26,.7)',
+          border: `1px solid ${file && selFormat ? '#3b82f6' : 'rgba(59,130,246,.12)'}`,
+          color: file && selFormat ? '#fff' : '#3a5472',
+          boxShadow: file && selFormat ? '0 4px 24px rgba(59,130,246,.25)' : 'none',
+          transition: 'all .2s',
+        }}>
+        {selFormat ? `✦ توليد ${selFormat.label_ar} بالذكاء الاصطناعي` : 'اختر صيغة للبدء'}
+      </button>
+    </div>
+  )
+
+  // ── PHASE: PROCESSING ──────────────────────────────────────────────────
+  if (phase === 'processing') return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - 160px)', gap: 28 }}>
+      <div style={{ fontSize: 64, animation: 'spin 2s linear infinite' }}>✦</div>
+      <div style={{ fontWeight: 900, fontSize: 20, color: '#ccd9ef' }}>جاري التوليد الذكي...</div>
+      <div style={{ fontSize: 13, color: '#5b7fa6', minHeight: 20 }}>{progressMsg}</div>
+
+      {/* Progress bar */}
+      <div style={{ width: 420, maxWidth: '90vw' }}>
+        <div style={{ background: 'rgba(59,130,246,.1)', borderRadius: 8, height: 8, overflow: 'hidden', border: '1px solid rgba(59,130,246,.15)' }}>
+          <div style={{
+            height: '100%', borderRadius: 8,
+            background: 'linear-gradient(90deg,#1e40af,#3b82f6,#60a5fa)',
+            width: `${progress}%`, transition: 'width 1.2s ease',
+          }} />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: 11, color: '#3a5472' }}>
+          <span>{progress}%</span>
+          <span>{selFormat?.icon} {selFormat?.label_ar}</span>
+        </div>
+      </div>
+
+      <div style={{ fontSize: 11, color: '#2a4a6e', maxWidth: 380, textAlign: 'center', lineHeight: 1.7 }}>
+        الذكاء الاصطناعي يحلل محتوى ملفك ويبني الهيكل المناسب — قد تستغرق العملية دقيقة أو دقيقتين حسب حجم الملف
+      </div>
+
+      <style>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
+    </div>
+  )
+
+  // ── PHASE: PREVIEW ──────────────────────────────────────────────────────
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 120px)', gap: 0 }}>
+      {/* Toolbar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', background: 'rgba(7,13,26,.97)', border: '1px solid rgba(59,130,246,.12)', borderRadius: '12px 12px 0 0', flexShrink: 0 }}>
+        <div style={{ fontSize: 18 }}>{selFormat?.icon}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 800, fontSize: 13, color: '#ccd9ef', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{result?.filename}</div>
+          <div style={{ fontSize: 10, color: '#3a5472' }}>{result ? fmtSize(result.size_bytes) : ''} · {selType}</div>
+        </div>
+
+        {/* Action buttons */}
+        <button onClick={handleDownload}
+          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 18px', borderRadius: 9, background: 'linear-gradient(135deg,#1e40af,#3b82f6)', border: '1px solid #3b82f6', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Tajawal'", flexShrink: 0 }}>
+          ⬇ تحميل
+        </button>
+        <button onClick={handleReset}
+          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 14px', borderRadius: 9, background: 'rgba(59,130,246,.07)', border: '1px solid rgba(59,130,246,.18)', color: '#5b7fa6', fontSize: 13, cursor: 'pointer', fontFamily: "'Tajawal'", flexShrink: 0 }}>
+          ↑ ملف آخر
+        </button>
+        <button onClick={handleReset}
+          style={{ width: 34, height: 34, borderRadius: 8, background: 'rgba(239,68,68,.07)', border: '1px solid rgba(239,68,68,.2)', color: '#f87171', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          ✕
+        </button>
+      </div>
+
+      {/* Preview area */}
+      <div style={{ flex: 1, overflow: 'hidden', background: '#060d1a', border: '1px solid rgba(59,130,246,.1)', borderTop: 'none', borderRadius: '0 0 12px 12px' }}>
+
+        {/* PDF preview */}
+        {result?.format === 'pdf' && previewUrl && (
+          <iframe
+            src={previewUrl}
+            style={{ width: '100%', height: '100%', border: 'none' }}
+            title="PDF Preview"
+          />
+        )}
+
+        {/* Excel table preview */}
+        {result?.format === 'excel' && xlsRows && (
+          <div style={{ overflow: 'auto', height: '100%', padding: 20 }}>
+            <div style={{ fontSize: 11, color: '#3a5472', marginBottom: 10 }}>
+              معاينة الصفحة الأولى — {xlsRows.rows.length} صف · {xlsRows.headers.length} عمود
+            </div>
+            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12, direction: 'rtl' }}>
+              <thead>
+                <tr>
+                  {xlsRows.headers.map((h, i) => (
+                    <th key={i} style={{ padding: '9px 14px', background: '#1e3a5f', color: '#ccd9ef', fontWeight: 700, textAlign: 'right', border: '1px solid rgba(59,130,246,.15)', whiteSpace: 'nowrap' }}>
+                      {h || `عمود ${i + 1}`}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {xlsRows.rows.slice(0, 100).map((row, ri) => (
+                  <tr key={ri} style={{ background: ri % 2 === 0 ? 'rgba(16,26,46,.9)' : 'rgba(6,13,26,.9)' }}>
+                    {xlsRows.headers.map((_, ci) => (
+                      <td key={ci} style={{ padding: '8px 14px', border: '1px solid rgba(59,130,246,.08)', color: '#ccd9ef', textAlign: 'right', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {String(row[ci] ?? '')}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {xlsRows.rows.length > 100 && (
+              <div style={{ textAlign: 'center', padding: '12px 0', color: '#3a5472', fontSize: 11 }}>
+                تعرض أول 100 صف — حمّل الملف لرؤية كل البيانات
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Excel — no XLSX lib fallback */}
+        {result?.format === 'excel' && !xlsRows && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16, color: '#5b7fa6' }}>
+            <div style={{ fontSize: 52 }}>📊</div>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>تم توليد ملف Excel بنجاح</div>
+            <div style={{ fontSize: 12 }}>اضغط "تحميل" لفتحه في Excel أو Google Sheets</div>
+          </div>
+        )}
+
+        {/* Power BI JSON preview */}
+        {result?.format === 'powerbi' && (
+          <div style={{ overflow: 'auto', height: '100%', padding: 20 }}>
+            {jsonData ? (
+              <>
+                <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+                  <div style={{ padding: '10px 16px', background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.2)', borderRadius: 10 }}>
+                    <div style={{ fontSize: 10, color: '#f59e0b', fontWeight: 700 }}>Dataset</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: '#ccd9ef' }}>{jsonData.dataset_name}</div>
+                  </div>
+                  <div style={{ padding: '10px 16px', background: 'rgba(59,130,246,.08)', border: '1px solid rgba(59,130,246,.2)', borderRadius: 10 }}>
+                    <div style={{ fontSize: 10, color: '#3b82f6', fontWeight: 700 }}>الجداول</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: '#ccd9ef' }}>{jsonData.tables?.length || 0}</div>
+                  </div>
+                  <div style={{ padding: '10px 16px', background: 'rgba(16,185,129,.08)', border: '1px solid rgba(16,185,129,.2)', borderRadius: 10 }}>
+                    <div style={{ fontSize: 10, color: '#10b981', fontWeight: 700 }}>Measures</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: '#ccd9ef' }}>{jsonData.measures?.length || 0}</div>
+                  </div>
+                </div>
+                {jsonData.suggested_visuals?.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, color: '#5b7fa6', fontWeight: 700, marginBottom: 8, letterSpacing: '.06em' }}>مرئيات مقترحة لـ Power BI</div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      {jsonData.suggested_visuals.map((v: any, i: number) => (
+                        <div key={i} style={{ padding: '8px 14px', background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.15)', borderRadius: 9 }}>
+                          <span style={{ fontSize: 12, color: '#f59e0b', fontWeight: 700 }}>{v.type}</span>
+                          <span style={{ fontSize: 11, color: '#5b7fa6', marginRight: 8 }}>— {v.title}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <pre style={{ background: 'rgba(6,13,26,.8)', border: '1px solid rgba(59,130,246,.1)', borderRadius: 10, padding: 16, fontSize: 11, color: '#7eb3f8', overflow: 'auto', maxHeight: 400 }}>
+                  {JSON.stringify(jsonData, null, 2)}
+                </pre>
+              </>
+            ) : (
+              <pre style={{ background: 'rgba(6,13,26,.8)', border: '1px solid rgba(59,130,246,.1)', borderRadius: 10, padding: 16, fontSize: 11, color: '#7eb3f8', overflow: 'auto', height: '100%' }}>
+                {previewUrl && 'جاري تحميل البيانات...'}
+              </pre>
+            )}
+          </div>
+        )}
+
+        {/* Word / PowerPoint — download only */}
+        {(result?.format === 'word' || result?.format === 'powerpoint') && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 20 }}>
+            <div style={{ fontSize: 64 }}>{selFormat?.icon}</div>
+            <div style={{ fontWeight: 900, fontSize: 18, color: '#ccd9ef' }}>تم توليد الملف بنجاح!</div>
+            <div style={{ fontSize: 13, color: '#5b7fa6', maxWidth: 360, textAlign: 'center', lineHeight: 1.7 }}>
+              ملف <strong style={{ color: selFormat?.color }}>{selFormat?.label}</strong> جاهز للتحميل.
+              سيفتح تلقائياً في {result.format === 'word' ? 'Microsoft Word أو Google Docs' : 'PowerPoint أو Google Slides'}.
+            </div>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button onClick={handleDownload}
+                style={{ padding: '12px 28px', borderRadius: 12, background: 'linear-gradient(135deg,#1e40af,#3b82f6)', border: '1px solid #3b82f6', color: '#fff', fontSize: 14, fontWeight: 800, cursor: 'pointer', fontFamily: "'Tajawal'" }}>
+                ⬇ تحميل الملف
+              </button>
+              <button onClick={handleReset}
+                style={{ padding: '12px 20px', borderRadius: 12, background: 'rgba(59,130,246,.07)', border: '1px solid rgba(59,130,246,.18)', color: '#5b7fa6', fontSize: 14, cursor: 'pointer', fontFamily: "'Tajawal'" }}>
+                ↑ ملف آخر
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: '#2a4a6e' }}>{result?.filename} · {result ? fmtSize(result.size_bytes) : ''}</div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

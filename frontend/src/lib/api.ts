@@ -244,3 +244,33 @@ export const messagingApi = {
   // SSE stream — returns the base URL for EventSource
   getStreamUrl: () => `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost/api'}/events/stream`,
 }
+
+// ─── Smart Export Studio ───────────────────────────────────────────────────
+export const exportApi = {
+  getFormats: () => api.get('/export/formats'),
+
+  /** Download generated file as blob */
+  generate: (file: File, outputFormat: string, exportType: string) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('output_format', outputFormat)
+    fd.append('export_type', exportType)
+    return api.post('/export/generate', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      responseType: 'blob',
+      timeout: 300_000, // 5 min — AI generation can take time
+    })
+  },
+
+  /** Preview: returns base64 + metadata */
+  preview: (file: File, outputFormat: string, exportType: string) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('output_format', outputFormat)
+    fd.append('export_type', exportType)
+    return api.post('/export/preview', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300_000,
+    })
+  },
+}
