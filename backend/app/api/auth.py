@@ -30,8 +30,8 @@ from app.core.security import (
     verify_password, verify_totp,
 )
 from app.models.models import (
-    ApprovalStatus, AuditAction,
-    Organization, RefreshToken, User, UserRole,
+    ApprovalStatus, AuditAction, DocumentType,
+    Organization, RefreshToken, SubscriptionPlan, User, UserRole,
 )
 
 log = structlog.get_logger()

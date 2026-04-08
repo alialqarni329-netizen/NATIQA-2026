@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # Railway Postgres plugin sets DATABASE_URL automatically.
     # asyncpg requires postgresql+asyncpg:// scheme.
     # If Railway gives postgresql:// we normalise it in the property below.
-    DATABASE_URL: str = "postgresql+asyncpg://natiqa_admin:password@db:5432/natiqa"
+    DATABASE_URL: str = "postgresql+asyncpg://natiqa_admin:CHANGE_ME@db:5432/natiqa"
 
     @property
     def async_database_url(self) -> str:

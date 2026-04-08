@@ -197,6 +197,7 @@ async def approve_user(
     # ── تطبيق الموافقة ────────────────────────────────────────────────
     now = datetime.now(timezone.utc)
     target.approval_status = ApprovalStatus.APPROVED
+    target.is_active       = True  # تأكد من تفعيل الحساب ليتمكن من الدخول
     target.approved_by     = current.id
     target.approved_at     = now
     target.rejection_reason = None   # إلغاء أي رفض سابق

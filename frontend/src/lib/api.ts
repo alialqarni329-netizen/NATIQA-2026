@@ -195,6 +195,11 @@ export const adminApi = {
   exportWord: () => api.get('/admin/export/word', { responseType: 'blob' }),
   exportPptx: () => api.get('/admin/export/pptx', { responseType: 'blob' }),
   exportPowerBi: () => api.get('/admin/export/powerbi'),
+
+  // Platform-wide management (via Admin Portal Router)
+  portalStats: () => api.get('/admin-portal/api/stats'),
+  portalUsers: (page = 1, status = '', search = '') =>
+    api.get('/admin-portal/api/users', { params: { page, status, search } }),
 }
 
 // ─── Organization Management ──────────────────────────────────────────

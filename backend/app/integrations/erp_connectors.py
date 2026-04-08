@@ -148,7 +148,7 @@ class OdooConnector(BaseERPConnector):
         base_url  = "https://your-odoo.com"
         database  = "your_db_name"
         username  = "admin@company.com"
-        password  = "odoo_password"
+        password  = "CHANGE_ME"
         auth_type = "odoo_rpc"
     """
 
@@ -525,7 +525,7 @@ class SAPConnector(BaseERPConnector):
     الإعدادات:
         base_url    = "https://sap.company.com/sap/opu/odata4/sap"
         username    = "sap_user"
-        password    = "sap_pass"
+        password    = "CHANGE_ME"
         auth_type   = "basic"
     """
 
