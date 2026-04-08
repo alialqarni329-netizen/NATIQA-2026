@@ -72,7 +72,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio pytest-cov httpx anyio
+          pip install pytest pytest-asyncio pytest-cov httpx anyio aiosqlite
 
       - name: Run backend tests
         working-directory: backend
