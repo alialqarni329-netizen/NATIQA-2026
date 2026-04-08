@@ -62,6 +62,7 @@ type Org = {
 export default function AdminDashboard() {
     const router = useRouter()
     const hydrated = useAuthHydrated()
+    const user = useAuthStore((state) => state.user)
     const [stats, setStats] = useState<Stats | null>(null)
     const [orgs, setOrgs] = useState<Org[]>([])
     const [loading, setLoading] = useState(true)
@@ -71,13 +72,13 @@ export default function AdminDashboard() {
 
     useEffect(() => {
         if (!hydrated) return
-        if (!isAdmin()) {
+        if (user?.role !== 'admin' && user?.role !== 'super_admin') {
             toast.error('Access Denied')
             router.push('/dashboard')
             return
         }
         fetchData()
-    }, [hydrated])
+    }, [hydrated, user, router])
 
     if (!hydrated) {
         return (
@@ -132,7 +133,7 @@ export default function AdminDashboard() {
         }
     }
 
-    if (!user || !isAdmin()) return null
+    if (!user || (user?.role !== 'admin' && user?.role !== 'super_admin')) return null
 
     return (
         <div className="min-h-screen bg-[#0a0a0c] text-slate-200 p-6 md:p-10 font-sans selection:bg-blue-500/30">
