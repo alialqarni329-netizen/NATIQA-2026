@@ -486,7 +486,13 @@ async def login(
             detail="Your account was not approved. Contact support.")
     # ────────────────────────────────────────────────────────────────
 
-    if not user.is_active:
+    # ── Backward-compat: is_active may be missing on old schema records ──
+    is_active = getattr(user, "is_active", None)
+    if is_active is None:
+        log.warning("User record missing is_active field — treating as inactive (old schema)",
+                    email=user.email, user_id=str(user.id))
+        is_active = False
+    if not is_active:
         log.warning("Login failed - user is NOT active", email=user.email)
         await fail()
     if user.locked_until and user.locked_until > datetime.now(timezone.utc):
@@ -508,19 +514,31 @@ async def login(
     user.last_login    = datetime.now(timezone.utc)
 
     # ── Golden Trial Activation (first login after approval) ──────────
+    # Use organization_id (scalar FK) to avoid lazy-loading the relationship
+    # in async context, which triggers MissingGreenlet.
     trial_activated = False
     if (
         user.approval_status == ApprovalStatus.APPROVED
-        and getattr(user, "organization", None) is not None
-        and user.organization.trial_starts_at is None
-        and str(user.organization.subscription_plan) == "SubscriptionPlan.FREE"
+        and user.organization_id is not None
     ):
-        now_utc = datetime.now(timezone.utc)
-        user.organization.trial_starts_at = now_utc
-        user.organization.trial_ends_at   = now_utc + timedelta(days=15)
-        trial_activated = True
-        log.info("Golden Trial activated", user_id=str(user.id), email=user.email,
-                 trial_ends_at=user.organization.trial_ends_at.isoformat())
+        try:
+            # Eagerly load the relationship now that we know it exists
+            await db.refresh(user, ["organization"])
+            org = user.organization
+            if (
+                org is not None
+                and org.trial_starts_at is None
+                and str(org.subscription_plan) in ("SubscriptionPlan.FREE", "FREE")
+            ):
+                now_utc = datetime.now(timezone.utc)
+                org.trial_starts_at = now_utc
+                org.trial_ends_at   = now_utc + timedelta(days=15)
+                trial_activated = True
+                log.info("Golden Trial activated", user_id=str(user.id), email=user.email,
+                         trial_ends_at=org.trial_ends_at.isoformat())
+        except Exception as _trial_exc:
+            log.warning("Could not check/activate trial — skipping",
+                        user_id=str(user.id), error=str(_trial_exc))
 
     access_token      = create_access_token(str(user.id), extra={"role": user.role.value, "email": user.email})
     refresh_token_str = create_refresh_token(str(user.id))
@@ -535,12 +553,28 @@ async def login(
     await db.commit()
 
     # ── Build trial_info for the frontend banner ───────────────────────
+    # organization is already loaded (refreshed above) if organization_id is set;
+    # fall back gracefully for users without an org.
     from app.services.plans import is_in_trial_period, trial_days_remaining
-    in_trial = is_in_trial_period(user)
+    try:
+        if user.organization_id is not None and not hasattr(user, "_org_refreshed"):
+            # Ensure org is loaded for is_in_trial_period (pure-Python helper)
+            await db.refresh(user, ["organization"])
+        in_trial = is_in_trial_period(user)
+        trial_ends_at_iso = (
+            user.organization.trial_ends_at.isoformat()
+            if (getattr(user, "organization", None) and user.organization.trial_ends_at)
+            else None
+        )
+    except Exception as _info_exc:
+        log.warning("Could not build trial_info — defaulting to no trial",
+                    user_id=str(user.id), error=str(_info_exc))
+        in_trial = False
+        trial_ends_at_iso = None
     trial_info = {
         "active":         in_trial,
         "days_remaining": trial_days_remaining(user) if in_trial else 0,
-        "ends_at":        user.organization.trial_ends_at.isoformat() if (getattr(user, "organization", None) and user.organization.trial_ends_at) else None,
+        "ends_at":        trial_ends_at_iso,
         "just_activated": trial_activated,
     }
 

@@ -77,9 +77,21 @@ app.add_middleware(
 )
 
 # ─── Exception Handlers with CORS support ──────────────────────────────
+_HARDCODED_ORIGINS: frozenset[str] = frozenset({
+    "https://frontend-production-043cd.up.railway.app",
+    "https://natiqa-2026-production.up.railway.app",
+})
+
 def _add_cors_headers(request: Request, response: JSONResponse):
     origin = request.headers.get("origin")
-    if origin and (origin in settings.cors_origins_list or settings.DEBUG):
+    if not origin:
+        return response
+    allowed = (
+        settings.DEBUG
+        or origin in _HARDCODED_ORIGINS
+        or origin in settings.cors_origins_list
+    )
+    if allowed:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Access-Control-Allow-Methods"] = "*"
