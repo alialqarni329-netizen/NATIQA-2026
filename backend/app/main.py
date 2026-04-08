@@ -64,10 +64,14 @@ app = FastAPI(
 # ─── CORS ─ يُقرأ من .env عبر settings.cors_origins_list ──────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
+    allow_origins=[
+        "https://frontend-production-043cd.up.railway.app",
+        "https://natiqa-2026-production.up.railway.app",
+        *settings.cors_origins_list
+    ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],
+    allow_methods=["*"],
+    allow_headers=["*"],
     expose_headers=["X-Request-ID"],
     max_age=600,
 )

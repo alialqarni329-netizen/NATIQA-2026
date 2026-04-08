@@ -66,6 +66,7 @@ export default function AdminDashboard() {
     const [stats, setStats] = useState<Stats | null>(null)
     const [orgs, setOrgs] = useState<Org[]>([])
     const [loading, setLoading] = useState(true)
+    const [fetchError, setFetchError] = useState<string | null>(null)
     const [exporting, setExporting] = useState<string | null>(null)
     const [showExportMenu, setShowExportMenu] = useState(false)
     const [view, setView] = useState<'overview' | 'analytics'>('overview')
@@ -90,6 +91,7 @@ export default function AdminDashboard() {
 
     const fetchData = async () => {
         setLoading(true)
+        setFetchError(null)
         try {
             const [sRes, oRes] = await Promise.all([
                 adminApi.stats(),
@@ -97,8 +99,10 @@ export default function AdminDashboard() {
             ])
             setStats(sRes.data)
             setOrgs(oRes.data)
-        } catch (err) {
+        } catch (err: any) {
+            console.error('Admin data fetch error:', err?.response?.status, err)
             toast.error('Failed to load admin data')
+            setFetchError(`فشل في تحميل البيانات (Status: ${err?.response?.status || 'Unknown'})`)
         } finally {
             setLoading(false)
         }
@@ -133,7 +137,13 @@ export default function AdminDashboard() {
         }
     }
 
-    if (!user || (user?.role !== 'admin' && user?.role !== 'super_admin')) return null
+    if (!user || (user?.role !== 'admin' && user?.role !== 'super_admin')) {
+        return (
+            <div className="min-h-screen bg-[#0a0a0c] flex items-center justify-center">
+                <div className="w-10 h-10 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
+            </div>
+        )
+    }
 
     return (
         <div className="min-h-screen bg-[#0a0a0c] text-slate-200 p-6 md:p-10 font-sans selection:bg-blue-500/30">
@@ -228,7 +238,26 @@ export default function AdminDashboard() {
                 </button>
             </div>
 
-            {view === 'analytics' ? (
+            {fetchError ? (
+                <div className="flex flex-col items-center justify-center py-20 bg-slate-900/50 rounded-2xl border border-red-500/20">
+                    <div className="w-16 h-16 bg-red-500/10 text-red-500 flex items-center justify-center rounded-full mb-4">
+                        <svg width="32" height="32" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                    </div>
+                    <h3 className="text-xl font-bold text-white mb-2">إخفاق في تحميل البيانات</h3>
+                    <p className="text-slate-400 mb-6">{fetchError}</p>
+                    <button onClick={fetchData} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg flex items-center gap-2 transition-colors">
+                        <RefreshIcon size={18} />
+                        إعادة المحاولة
+                    </button>
+                </div>
+            ) : loading && !stats ? (
+                <div className="flex items-center justify-center py-20">
+                    <div className="flex flex-col items-center gap-4">
+                        <div className="w-10 h-10 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin"></div>
+                        <p className="text-slate-400">جاري تحميل البيانات...</p>
+                    </div>
+                </div>
+            ) : view === 'analytics' ? (
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
                     <DashboardAnalytics isGlobal={true} />
                 </div>
