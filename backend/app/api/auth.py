@@ -457,6 +457,8 @@ async def login(
 ):
     # ── Lookup user ──────────────────────────────────────────────────
     ip   = request.client.host if request.client else "unknown"
+    log.info("Login attempt", email=body.email, ip=ip)
+
     user = (await db.execute(select(User).where(User.email == body.email.lower()))).scalar_one_or_none()
 
     async def fail(msg: str = "Invalid email or password") -> None:
@@ -465,9 +467,11 @@ async def login(
             if user.failed_logins >= MAX_FAILED_LOGINS:
                 user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=LOCK_DURATION_MINUTES)
             await db.commit()
+            log.warning("Login failed", email=user.email, reason=msg, failed_logins=user.failed_logins)
         raise HTTPException(status_code=401, detail=msg)
 
     if not user:
+        log.warning("Login failed - user not found in DB", email=body.email)
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     # ── Phase 1 Gates ────────────────────────────────────────────────
@@ -483,11 +487,14 @@ async def login(
     # ────────────────────────────────────────────────────────────────
 
     if not user.is_active:
+        log.warning("Login failed - user is NOT active", email=user.email)
         await fail()
     if user.locked_until and user.locked_until > datetime.now(timezone.utc):
+        log.warning("Login failed - user is locked out", email=user.email, locked_until=user.locked_until)
         raise HTTPException(status_code=403,
             detail=f"Account locked until {user.locked_until.strftime('%H:%M')}. Contact admin.")
     if not verify_password(body.password, user.hashed_password):
+        log.warning("Login failed - password mismatch", email=user.email)
         await fail()
 
     if user.totp_enabled:
