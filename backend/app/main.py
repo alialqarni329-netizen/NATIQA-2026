@@ -77,6 +77,15 @@ app.add_middleware(
 )
 
 # ─── Exception Handlers with CORS support ──────────────────────────────
+def _add_cors_headers(request: Request, response: JSONResponse):
+    origin = request.headers.get("origin")
+    if origin and (origin in settings.cors_origins_list or settings.DEBUG):
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     response = JSONResponse(
@@ -84,13 +93,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         content={"detail": exc.detail},
         headers=exc.headers or {}
     )
-    origin = request.headers.get("origin")
-    if origin:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-    return response
+    return _add_cors_headers(request, response)
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -115,11 +118,7 @@ async def global_exception_handler(request: Request, exc: Exception):
             "path": request.url.path,
         }
     response = JSONResponse(status_code=500, content=content)
-    origin = request.headers.get("origin")
-    if origin:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-    return response
+    return _add_cors_headers(request, response)
 
 @app.exception_handler(404)
 async def custom_404_handler(request: Request, exc: HTTPException):
@@ -128,13 +127,7 @@ async def custom_404_handler(request: Request, exc: HTTPException):
         status_code=404,
         content={"detail": "رابط غير موجود أو غير صالح", "path": request.url.path},
     )
-    origin = request.headers.get("origin")
-    if origin:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-    return response
+    return _add_cors_headers(request, response)
 
 
 # ─── Routes ───────────────────────────────────────────────────────────
@@ -142,7 +135,7 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(main_routes.router, prefix="/api")
 app.include_router(user_routes.router, prefix="/api")
 app.include_router(admin_routes.router, prefix="/api")   # Phase 1: /api/admin/*
-app.include_router(admin_portal.router)                   # Phase 2: /admin-portal/*
+app.include_router(admin_portal.router, prefix="/api")   # Phase 2: /api/admin-portal/*
 app.include_router(notification_routes.router, prefix="/api")
 app.include_router(integration_routes.router, prefix="/api")
 app.include_router(agent_routes.router, prefix="/api")

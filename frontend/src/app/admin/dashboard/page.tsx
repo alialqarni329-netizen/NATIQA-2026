@@ -93,6 +93,9 @@ export default function AdminDashboard() {
         setLoading(true)
         setFetchError(null)
         try {
+            // First attempt to use /api/admin/stats which is for Organization stats
+            // and /admin-portal/api/stats for global platform stats if needed.
+            // dashboard/page.tsx uses adminApi.stats() which is /api/admin/stats
             const [sRes, oRes] = await Promise.all([
                 adminApi.stats(),
                 adminApi.listOrganizations()
@@ -101,8 +104,17 @@ export default function AdminDashboard() {
             setOrgs(oRes.data)
         } catch (err: any) {
             console.error('Admin data fetch error:', err?.response?.status, err)
-            toast.error('Failed to load admin data')
-            setFetchError(`فشل في تحميل البيانات (Status: ${err?.response?.status || 'Unknown'})`)
+
+            // Silently try fallback to portalStats if main admin stats fail
+            try {
+                const sRes = await adminApi.portalStats()
+                setStats(sRes.data)
+                const oRes = await adminApi.listOrganizations()
+                setOrgs(oRes.data)
+            } catch (fallbackErr: any) {
+                toast.error('فشل تحميل بيانات الإدارة')
+                setFetchError(`فشل في تحميل البيانات (Status: ${err?.response?.status || 'Unknown'})`)
+            }
         } finally {
             setLoading(false)
         }

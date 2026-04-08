@@ -413,7 +413,18 @@ function Dashboard() {
 /* ══ DASH ══════════════════════════════════════════════════ */
 function DashView({ projs, setView, setProj }: any) {
   const [stats, setStats] = useState<any>(null)
-  useEffect(() => { dashApi.stats().then(r => setStats(r.data)).catch(() => { }) }, [])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    dashApi.stats()
+      .then(r => setStats(r.data))
+      .catch(() => {
+        toast.error('فشل تحميل إحصائيات لوحة التحكم')
+      })
+      .finally(() => setLoading(false))
+  }, [])
+
   const active = projs.filter((p: any) => p.status === 'active').length
   const done = projs.filter((p: any) => p.status === 'done').length
   const pieData = [{ n: 'نشطة', v: active, c: '#3b82f6' }, { n: 'مكتملة', v: done, c: '#10b981' }]
@@ -430,7 +441,11 @@ function DashView({ projs, setView, setProj }: any) {
           <div key={i} className="card fu" style={{ padding: '22px 24px', position: 'relative', overflow: 'hidden', animationDelay: `${i * .07}s` }}>
             <div style={{ position: 'absolute', top: -30, right: -20, width: 90, height: 90, borderRadius: '50%', background: `radial-gradient(circle,${s.color}22 0%,transparent 70%)` }} />
             <div style={{ fontSize: 26, marginBottom: 10 }}>{s.icon}</div>
-            <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 28, fontWeight: 600, color: s.color }}>{Number(s.value).toLocaleString('ar-SA')}</div>
+            {loading ? (
+              <div style={{ height: 34, display: 'flex', alignItems: 'center' }}><Spin s={20} c={s.color} /></div>
+            ) : (
+              <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 28, fontWeight: 600, color: s.color }}>{Number(s.value).toLocaleString('ar-SA')}</div>
+            )}
             <div style={{ fontSize: 12, color: '#3a5472', marginTop: 6 }}>{s.label}</div>
           </div>
         ))}
