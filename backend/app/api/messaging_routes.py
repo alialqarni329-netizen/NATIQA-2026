@@ -167,6 +167,15 @@ async def list_channels(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # ── Feature Gating: Require PRO or ENTERPRISE ─────────────────────
+    from app.services.plans import get_effective_plan, SubscriptionPlan
+    plan_enum, _ = get_effective_plan(user)
+    if plan_enum == SubscriptionPlan.FREE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="نظام المراسلة متاح فقط لمشتركي الباقة الاحترافية والمؤسسية."
+        )
+
     """Return all non-DM channels the user belongs to."""
     res = await db.execute(
         select(Channel)
@@ -260,6 +269,15 @@ async def get_channel(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # ── Feature Gating: Require PRO or ENTERPRISE ─────────────────────
+    from app.services.plans import get_effective_plan, SubscriptionPlan
+    plan_enum, _ = get_effective_plan(user)
+    if plan_enum == SubscriptionPlan.FREE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="المراسلة المباشرة متاحة فقط لمشتركي الباقة الاحترافية والمؤسسية."
+        )
+
     await _assert_member(channel_id, user.id, db)
     res = await db.execute(
         select(Channel)

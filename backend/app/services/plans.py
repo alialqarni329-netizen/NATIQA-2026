@@ -394,6 +394,41 @@ class UsageTracker:
         log.debug("ai_query_check_passed",
                   user_id=user_id, plan=plan, today=today_count)
 
+    @staticmethod
+    async def deduct_tokens(
+        organization_id: str,
+        tokens: int,
+        db: AsyncSession,
+    ) -> int:
+        """
+        Deduct tokens from the organization's balance in real-time.
+        Returns the new balance.
+        """
+        from app.models.models import Organization
+        import uuid as _uuid
+        from fastapi import HTTPException
+
+        res = await db.execute(
+            select(Organization).where(Organization.id == _uuid.UUID(organization_id))
+        )
+        org = res.scalar_one_or_none()
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        if org.token_balance < tokens:
+             log.warning("Insufficient tokens", org_id=organization_id, balance=org.token_balance, requested=tokens)
+             # Option: allow negative or raise error.
+             # Requirement says "calculate and deduct", usually implies enforcement.
+             raise HTTPException(
+                 status_code=403,
+                 detail="رصيد التوكنات غير كافٍ. يرجى شحن الرصيد لمتابعة استخدام المحادثة."
+             )
+
+        org.token_balance -= tokens
+        await db.flush()
+        log.info("Tokens deducted", org_id=organization_id, deducted=tokens, new_balance=org.token_balance)
+        return org.token_balance
+
     # ── Usage summary (for /me and admin portal) ──────────────────────
 
     @staticmethod
