@@ -4,6 +4,7 @@
 ╚══════════════════════════════════════════════════════════════════════╝
 """
 import io
+import os
 import re
 from typing import List, Optional
 from datetime import datetime
@@ -25,12 +26,26 @@ import structlog
 log = structlog.get_logger()
 
 # ─── Arabic Support ──────────────────────────────────────────────────
-ARABIC_FONT_PATH = "C:/Windows/Fonts/arial.ttf" # Fallback to system Arial
-try:
-    pdfmetrics.registerFont(TTFont('Arabic', ARABIC_FONT_PATH))
-    log.info("Arabic font registered", path=ARABIC_FONT_PATH)
-except Exception as e:
-    log.warning("Could not register Arabic font, using Helvetica", error=str(e))
+# Linux and Windows common paths
+_FONT_PATHS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+]
+ARABIC_FONT_PATH = None
+for path in _FONT_PATHS:
+    if os.path.exists(path):
+        ARABIC_FONT_PATH = path
+        break
+
+if ARABIC_FONT_PATH:
+    try:
+        pdfmetrics.registerFont(TTFont('Arabic', ARABIC_FONT_PATH))
+        log.info("Arabic font registered", path=ARABIC_FONT_PATH)
+    except Exception as e:
+        log.warning("Could not register Arabic font, using Helvetica", error=str(e))
+else:
+    log.warning("No TTF font found for Arabic PDF rendering. Falling back to Helvetica.")
 
 
 def reshape_text(text: str) -> str:
@@ -179,7 +194,7 @@ class FileGenerator:
             if any(k in col.lower() for k in ['date', 'time', 'تاريخ', 'وقت']):
                 try:
                     df[col] = pd.to_datetime(df[col], errors='coerce').dt.strftime('%Y-%m-%d')
-                except:
+                except Exception:
                     pass
         
         # 3. Export with UTF-8-BOM for Excel/PowerBI compatibility with Arabic
