@@ -144,6 +144,7 @@ class Organization(Base):
     subscription_custom_limits: Mapped[Optional[dict]] = mapped_column(
         JSON, nullable=True, default=None
     )
+    token_balance: Mapped[int] = mapped_column(Integer, default=1000) # Default balance for new orgs
 
     # Trial
     trial_starts_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

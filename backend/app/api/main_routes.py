@@ -518,6 +518,15 @@ async def chat(
         conversation_id=conv.id,
     )
     db.add(ai_msg)
+
+    # ── Token deduction ─────────────────────────────────────────────
+    if user.organization_id:
+        await UsageTracker.deduct_tokens(
+            str(user.organization_id),
+            rag_result["tokens"],
+            db
+        )
+
     await log_audit(db, AuditAction.QUERY, user_id=user.id, resource_id=str(project_id), details={"tokens": rag_result["tokens"]})
     await db.commit()
 

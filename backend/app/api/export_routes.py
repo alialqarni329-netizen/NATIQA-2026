@@ -110,6 +110,15 @@ async def generate_export(
     export_type:   str        = Form(...),
     user:          User       = Depends(get_current_user),
 ):
+    # ── Feature Gating: Require PRO or ENTERPRISE ─────────────────────
+    from app.services.plans import get_effective_plan, SubscriptionPlan
+    plan_enum, _ = get_effective_plan(user)
+    if plan_enum == SubscriptionPlan.FREE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="استوديو التصدير متاح فقط لمشتركي الباقة الاحترافية والمؤسسية."
+        )
+
     """
     Analyze the uploaded file with AI and return the generated file for download.
     Streams the binary response so it is memory-efficient.
@@ -171,6 +180,15 @@ async def preview_export(
     export_type:   str        = Form(...),
     user:          User       = Depends(get_current_user),
 ):
+    # ── Feature Gating: Require PRO or ENTERPRISE ─────────────────────
+    from app.services.plans import get_effective_plan, SubscriptionPlan
+    plan_enum, _ = get_effective_plan(user)
+    if plan_enum == SubscriptionPlan.FREE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="معاينة التصدير متاحة فقط لمشتركي الباقة الاحترافية والمؤسسية."
+        )
+
     """
     Same as /generate but returns base64-encoded file + JSON structure for
     in-browser rendering (Excel table preview, PDF iframe, JSON viewer, etc.)
