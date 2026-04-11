@@ -790,30 +790,44 @@ async def dashboard_stats(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # ── Multi-tenancy: stats are shared for the organization ──────────
+    if user.organization_id:
+        filter_clause = (Project.organization_id == user.organization_id)
+    else:
+        filter_clause = (Project.owner_id == user.id)
+
     project_count = await db.scalar(
-        select(func.count()).select_from(Project).where(Project.owner_id == user.id)
+        select(func.count()).select_from(Project).where(filter_clause)
     )
     doc_count = await db.scalar(
         select(func.count()).select_from(Document)
         .join(Project, Document.project_id == Project.id)
-        .where(Project.owner_id == user.id, Document.status == DocumentStatus.READY)
+        .where(filter_clause, Document.status == DocumentStatus.READY)
     )
     total_chunks = await db.scalar(
         select(func.sum(Document.chunks_count))
         .select_from(Document)
         .join(Project, Document.project_id == Project.id)
-        .where(Project.owner_id == user.id, Document.status == DocumentStatus.READY)
+        .where(filter_clause, Document.status == DocumentStatus.READY)
     )
     query_count = await db.scalar(
         select(func.count()).select_from(Message)
         .join(Conversation, Message.conversation_id == Conversation.id)
         .join(Project, Conversation.project_id == Project.id)
-        .where(Project.owner_id == user.id, Message.role == "user")
+        .where(filter_clause, Message.role == "user")
     )
+
+    # Token balance for the organization
+    token_balance = 0
+    if user.organization_id:
+        from app.models.models import Organization
+        res = await db.execute(select(Organization.token_balance).where(Organization.id == user.organization_id))
+        token_balance = res.scalar() or 0
 
     return {
         "projects": project_count or 0,
         "documents": doc_count or 0,
         "total_chunks": total_chunks or 0,
         "total_queries": query_count or 0,
+        "token_balance": token_balance,
     }

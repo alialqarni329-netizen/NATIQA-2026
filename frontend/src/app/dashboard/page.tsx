@@ -430,7 +430,7 @@ function DashView({ projs, setView, setProj }: any) {
   const pieData = [{ n: 'نشطة', v: active, c: '#3b82f6' }, { n: 'مكتملة', v: done, c: '#10b981' }]
   const cards = [
     { icon: '📁', label: 'المشاريع', value: stats?.projects ?? projs.length, color: '#3b82f6' },
-    { icon: '📊', label: 'الاستعلامات', value: stats?.total_queries ?? 0, color: '#10b981' },
+    { icon: '🪙', label: 'رصيد التوكنات', value: stats?.token_balance ?? 0, color: '#10b981' },
     { icon: '📄', label: 'الملفات المستوعبة', value: stats?.documents ?? 0, color: '#f59e0b' },
     { icon: '🧩', label: 'إجمالي الـ Chunks', value: stats?.total_chunks ?? 0, color: '#8b5cf6' },
   ]
