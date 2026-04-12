@@ -323,7 +323,7 @@ async def register(
         email           = body.email,
         full_name       = body.full_name,
         hashed_password = hp(body.password),
-        role            = UserRole.ANALYST,
+        role            = UserRole.ORG_ADMIN,
         is_active       = False,
         organization_id = org.id,
         business_name   = body.business_name,

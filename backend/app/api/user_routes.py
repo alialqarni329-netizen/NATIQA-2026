@@ -121,7 +121,7 @@ class ResetPwBody(BaseModel):
 @router.get("/me/perms", summary="صلاحياتي الحالية")
 async def my_permissions(current: User = Depends(get_current_user)):
     depts    = current.allowed_depts or ROLE_DEFAULT_DEPTS.get(current.role, ["general"])
-    is_admin = current.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN)
+    is_admin = current.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.ORG_ADMIN)
     return {
         "role"         : current.role.value,
         "allowed_depts": depts,

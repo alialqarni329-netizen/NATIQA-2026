@@ -228,7 +228,8 @@ class User(Base):
     # ── Computed properties ───────────────────────────────────────────
     @property
     def is_admin(self) -> bool:
-        return self.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.ORG_ADMIN)
+        """True only for Platform Administrators (B2B SaaS Operators)."""
+        return self.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN)
 
     @property
     def can_access_platform(self) -> bool:

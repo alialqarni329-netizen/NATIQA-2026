@@ -253,54 +253,56 @@ class UsageTracker:
 
     @staticmethod
     async def get_document_count(
-        user_id: str,
+        owner_id: str,
         db: AsyncSession,
         redis: aioredis.Redis,
+        organization_id: Optional[str] = None,
     ) -> int:
         """
-        Returns the number of documents owned by this user.
+        Returns the number of documents in the organization (or owned by user if no org).
         Checks Redis cache first; falls back to DB and re-populates cache.
-        Cache TTL: 5 minutes.  Invalidated on upload/delete via
-        invalidate_doc_cache().
         """
-        cache_key = _doc_cache_key(user_id)
+        lookup_id = organization_id or owner_id
+        cache_key = _doc_cache_key(lookup_id)
         cached = await redis.get(cache_key)
         if cached is not None:
             return int(cached)
 
         from app.models.models import Document, Project
         import uuid as _uuid
-        count = await db.scalar(
-            select(func.count())
-            .select_from(Document)
-            .join(Project, Document.project_id == Project.id)
-            .where(Project.owner_id == _uuid.UUID(user_id))
-        )
+
+        stmt = select(func.count()).select_from(Document).join(Project, Document.project_id == Project.id)
+        if organization_id:
+            stmt = stmt.where(Project.organization_id == _uuid.UUID(organization_id))
+        else:
+            stmt = stmt.where(Project.owner_id == _uuid.UUID(owner_id))
+
+        count = await db.scalar(stmt)
         count = count or 0
         await redis.setex(cache_key, 300, str(count))   # 5-min cache
         return count
 
     @staticmethod
-    async def invalidate_doc_cache(user_id: str, redis: aioredis.Redis) -> None:
-        await redis.delete(_doc_cache_key(user_id))
+    async def invalidate_doc_cache(lookup_id: str, redis: aioredis.Redis) -> None:
+        await redis.delete(_doc_cache_key(lookup_id))
 
     # ── AI query counter ──────────────────────────────────────────────
 
     @staticmethod
     async def get_ai_queries_today(
-        user_id: str,
+        lookup_id: str,
         redis: aioredis.Redis,
     ) -> int:
-        val = await redis.get(_ai_counter_key(user_id))
+        val = await redis.get(_ai_counter_key(lookup_id))
         return int(val) if val else 0
 
     @staticmethod
     async def increment_ai_counter(
-        user_id: str,
+        lookup_id: str,
         redis: aioredis.Redis,
     ) -> int:
-        """Atomically increment and return new count."""
-        key = _ai_counter_key(user_id)
+        """Atomically increment and return new count (shared across org if lookup_id is org_id)."""
+        key = _ai_counter_key(lookup_id)
         count = await redis.incr(key)
         if count == 1:
             # First query today — set expiry to midnight UTC
@@ -317,6 +319,7 @@ class UsageTracker:
         db: AsyncSession,
         redis: aioredis.Redis,
         custom_limits: Optional[dict] = None,
+        organization_id: Optional[str] = None,
     ) -> None:
         """
         Raise HTTP 403 if the user has exceeded any upload limit.
@@ -347,7 +350,7 @@ class UsageTracker:
             if custom_limits else limits.max_documents
         )
         if effective_max_docs != UNLIMITED:
-            current = await UsageTracker.get_document_count(user_id, db, redis)
+            current = await UsageTracker.get_document_count(user_id, db, redis, organization_id=organization_id)
             if current >= effective_max_docs:
                 raise HTTPException(
                     status_code=403,
@@ -365,6 +368,7 @@ class UsageTracker:
         plan: SubscriptionPlan,
         redis: aioredis.Redis,
         custom_limits: Optional[dict] = None,
+        organization_id: Optional[str] = None,
     ) -> None:
         """
         Raise HTTP 403 if the user has exceeded today's AI query limit.
@@ -380,7 +384,7 @@ class UsageTracker:
         if effective_max == UNLIMITED:
             return
 
-        today_count = await UsageTracker.get_ai_queries_today(user_id, redis)
+        today_count = await UsageTracker.get_ai_queries_today(organization_id or user_id, redis)
         if today_count >= effective_max:
             raise HTTPException(
                 status_code=403,
@@ -438,10 +442,11 @@ class UsageTracker:
         db: AsyncSession,
         redis: aioredis.Redis,
         custom_limits: Optional[dict] = None,
+        organization_id: Optional[str] = None,
     ) -> dict:
         limits       = get_plan(plan)
-        doc_count    = await UsageTracker.get_document_count(user_id, db, redis)
-        ai_today     = await UsageTracker.get_ai_queries_today(user_id, redis)
+        doc_count    = await UsageTracker.get_document_count(user_id, db, redis, organization_id=organization_id)
+        ai_today     = await UsageTracker.get_ai_queries_today(organization_id or user_id, redis)
 
         max_docs = (
             custom_limits.get("max_documents", limits.max_documents)

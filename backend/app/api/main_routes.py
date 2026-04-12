@@ -273,6 +273,7 @@ async def upload_document(
         db=db,
         redis=redis,
         custom_limits=custom,
+        organization_id=str(user.organization_id) if user.organization_id else None,
     )
     # Legacy hard limit (keeps config-level guard as fallback)
     if len(file_bytes) > settings.MAX_FILE_SIZE_MB * 1024 * 1024:
@@ -306,7 +307,10 @@ async def upload_document(
     doc_id = str(doc.id)
     await db.commit()
     # Invalidate doc-count cache so next check is accurate
-    await UsageTracker.invalidate_doc_cache(str(user.id), redis)
+    await UsageTracker.invalidate_doc_cache(
+        str(user.organization_id) if user.organization_id else str(user.id),
+        redis
+    )
 
     # Process in background
     background_tasks.add_task(
@@ -477,9 +481,13 @@ async def chat(
         plan=plan_enum,
         redis=redis,
         custom_limits=custom,
+        organization_id=str(user.organization_id) if user.organization_id else None,
     )
     # Count the query AFTER the check passes
-    await UsageTracker.increment_ai_counter(str(user.id), redis)
+    await UsageTracker.increment_ai_counter(
+        str(user.organization_id) if user.organization_id else str(user.id),
+        redis
+    )
 
     # ── تحميل سجل المحادثة (آخر 10 رسائل) للذاكرة الكاملة ─────────────
     history: list = []
@@ -686,6 +694,7 @@ async def chat_upload(
         db=db,
         redis=redis,
         custom_limits=custom,
+        organization_id=str(user.organization_id) if user.organization_id else None,
     )
     if len(file_bytes) > settings.MAX_FILE_SIZE_MB * 1024 * 1024:
         raise HTTPException(
@@ -757,7 +766,10 @@ async def chat_upload(
     db.add(Message(role="assistant", content=wait_msg, conversation_id=conv.id))
 
     await db.commit()
-    await UsageTracker.invalidate_doc_cache(str(user.id), redis)
+    await UsageTracker.invalidate_doc_cache(
+        str(user.organization_id) if user.organization_id else str(user.id),
+        redis
+    )
 
     # 6. Trigger background classification and ingestion
     background_tasks.add_task(
@@ -820,9 +832,13 @@ async def dashboard_stats(
     # Token balance for the organization
     token_balance = 0
     if user.organization_id:
-        from app.models.models import Organization
-        res = await db.execute(select(Organization.token_balance).where(Organization.id == user.organization_id))
-        token_balance = res.scalar() or 0
+        try:
+            from app.models.models import Organization
+            res = await db.execute(select(Organization.token_balance).where(Organization.id == user.organization_id))
+            token_balance = res.scalar() or 0
+        except Exception as e:
+            log.warning("Failed to fetch token balance", error=str(e))
+            token_balance = 0
 
     return {
         "projects": project_count or 0,

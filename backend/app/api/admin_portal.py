@@ -304,7 +304,10 @@ async def change_plan(
     await db.refresh(user)
     await _bust_stats_cache(redis)
     # Invalidate doc cache so new limits take effect immediately
-    await UsageTracker.invalidate_doc_cache(str(user_id), redis)
+    await UsageTracker.invalidate_doc_cache(
+        str(user.organization_id) if user.organization_id else str(user_id),
+        redis
+    )
 
     log.info("plan_changed", target=user.email, from_plan=old_plan,
              to_plan=body.plan.value, by=admin.email)
@@ -420,6 +423,7 @@ async def user_usage(
         db=db,
         redis=redis,
         custom_limits=user.organization.subscription_custom_limits if getattr(user, "organization", None) else None,
+        organization_id=str(user.organization_id) if user.organization_id else None,
     )
     return {"user": _serialize_user(user), "usage": summary}
 

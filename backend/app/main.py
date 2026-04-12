@@ -62,13 +62,20 @@ app = FastAPI(
 )
 
 # ─── CORS ─ يُقرأ من .env عبر settings.cors_origins_list ──────────────
+# Consolidate and normalize origins
+ALLOWED_ORIGINS = [
+    "https://frontend-production-043cd.up.railway.app",
+    "https://natiqa-2026-production.up.railway.app",
+    "http://localhost:3000",
+]
+for o in settings.cors_origins_list:
+    clean_origin = o.rstrip("/")
+    if clean_origin and clean_origin not in ALLOWED_ORIGINS:
+        ALLOWED_ORIGINS.append(clean_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://frontend-production-043cd.up.railway.app",
-        "https://natiqa-2026-production.up.railway.app",
-        *settings.cors_origins_list
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -79,11 +86,13 @@ app.add_middleware(
 # ─── Exception Handlers with CORS support ──────────────────────────────
 def _add_cors_headers(request: Request, response: JSONResponse):
     origin = request.headers.get("origin")
-    if origin and (origin in settings.cors_origins_list or settings.DEBUG):
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "*"
+    if origin:
+        normalized_origin = origin.rstrip("/")
+        if normalized_origin in ALLOWED_ORIGINS or settings.DEBUG:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "*"
+            response.headers["Access-Control-Allow-Headers"] = "*"
     return response
 
 @app.exception_handler(HTTPException)

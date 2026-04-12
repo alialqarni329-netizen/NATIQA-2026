@@ -41,24 +41,26 @@ async def get_analytics_summary(
     - Org-Admin sees their organization's data.
     """
     is_admin = current.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN)
-    org_id = current.organization_id if not is_admin else None
+    org_id = current.organization_id
     
     start_date = get_time_range(days)
 
     # 1. Summary Cards
     # ────────────────────────────────────────────────────────────────
+    # Base filters for Multi-Tenancy
+    if is_admin:
+        p_filter = True
+    elif org_id:
+        p_filter = (Project.organization_id == org_id)
+    else:
+        p_filter = (Project.owner_id == current.id)
+
     # Projects
-    project_q = select(func.count(Project.id))
-    if org_id:
-        project_q = project_q.where(Project.organization_id == org_id)
+    project_q = select(func.count(Project.id)).where(p_filter)
     total_projects = await db.scalar(project_q)
 
     # Files (Documents)
-    doc_q = select(func.count(Document.id), func.sum(Document.file_size))
-    if org_id:
-        # Join with project to filter by org if needed, but Document has no direct org_id.
-        # However, Project has organization_id.
-        doc_q = doc_q.join(Project).where(Project.organization_id == org_id)
+    doc_q = select(func.count(Document.id), func.sum(Document.file_size)).join(Project).where(p_filter)
     doc_res = (await db.execute(doc_q)).fetchone()
     # Ensure aggregates are always numeric (no None/NaN propagation)
     if doc_res:
@@ -74,18 +76,12 @@ async def get_analytics_summary(
         user_q = user_q.where(User.organization_id == org_id)
     total_employees = await db.scalar(user_q)
 
-    # 2. Line Chart: Growth of Archived Files (over time)
+    # 2. Line Chart: Growth of Files (over time)
     # ────────────────────────────────────────────────────────────────
-    # We'll group archived documents by date (created_at)
-    # Documents don't have an "archived" flag, but Projects do.
-    # Growth = Files uploaded to active/archived projects over time.
     growth_q = select(
         func.date_trunc('day', Document.created_at).label('day'),
         func.count(Document.id).label('count')
-    ).where(Document.created_at >= start_date)
-    
-    if org_id:
-        growth_q = growth_q.join(Project).where(Project.organization_id == org_id)
+    ).join(Project).where(p_filter, Document.created_at >= start_date)
     
     growth_q = growth_q.group_by('day').order_by('day')
     growth_res = (await db.execute(growth_q)).all()
@@ -104,12 +100,18 @@ async def get_analytics_summary(
 
     # 3. Bar Chart: Active Users vs Pending Invitations
     # ────────────────────────────────────────────────────────────────
-    active_users_q = select(func.count(User.id)).where(User.is_active == True)
-    pending_inv_q = select(func.count(Invitation.id)).where(Invitation.accepted_at == None)
-    
-    if org_id:
-        active_users_q = active_users_q.where(User.organization_id == org_id)
-        pending_inv_q = pending_inv_q.where(Invitation.organization_id == org_id)
+    if is_admin:
+        u_filter = True
+        i_filter = True
+    elif org_id:
+        u_filter = (User.organization_id == org_id)
+        i_filter = (Invitation.organization_id == org_id)
+    else:
+        u_filter = (User.id == current.id)
+        i_filter = (Invitation.invited_by == current.id)
+
+    active_users_q = select(func.count(User.id)).where(u_filter, User.is_active == True)
+    pending_inv_q = select(func.count(Invitation.id)).where(i_filter, Invitation.accepted_at == None)
         
     active_users = await db.scalar(active_users_q)
     pending_invs = await db.scalar(pending_inv_q)
@@ -121,15 +123,10 @@ async def get_analytics_summary(
 
     # 4. Pie Chart: File Type Distribution
     # ────────────────────────────────────────────────────────────────
-    # We can infer type from file_name extension or just use departmental distribution if requested.
-    # The user asked for PDF, Word, PPT distribution.
-    # We use reverse split_part to get the extension safely in Postgres
     dist_q = select(
         func.lower(func.reverse(func.split_part(func.reverse(Document.file_name), '.', 1))).label('ext'),
         func.count(Document.id).label('count')
-    )
-    if org_id:
-        dist_q = dist_q.join(Project).where(Project.organization_id == org_id)
+    ).join(Project).where(p_filter)
     
     dist_q = dist_q.group_by('ext')
     dist_res = (await db.execute(dist_q)).all()
