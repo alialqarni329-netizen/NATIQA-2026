@@ -79,6 +79,19 @@ async def agent_chat(
         ip_address=request.client.host if request.client else None,
         session_id=request.headers.get("X-Session-ID"),
     )
+
+    # ── Token deduction ─────────────────────────────────────────────
+    from app.services.plans import UsageTracker
+    from app.core.database import AsyncSessionLocal
+    if current_user.organization_id:
+        async with AsyncSessionLocal() as db_session:
+            await UsageTracker.deduct_tokens(
+                str(current_user.organization_id),
+                result.tokens_used,
+                db_session
+            )
+            await db_session.commit()
+
     return AgentChatResponse(**result.__dict__)
 
 

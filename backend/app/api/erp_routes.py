@@ -382,6 +382,18 @@ async def erp_rag_chat(
         max_tokens=2048,
     )
 
+    # ── Token deduction ─────────────────────────────────────────────
+    from app.services.plans import UsageTracker
+    from app.core.database import AsyncSessionLocal
+    if user.organization_id:
+        async with AsyncSessionLocal() as db_session:
+            await UsageTracker.deduct_tokens(
+                str(user.organization_id),
+                final_resp.total_tokens,
+                db_session
+            )
+            await db_session.commit()
+
     return {
         "answer":        final_resp.content,
         "used_erp":      len(erp_contexts) > 0,

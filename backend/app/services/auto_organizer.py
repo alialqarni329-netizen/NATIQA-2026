@@ -305,6 +305,16 @@ async def handle_auto_classification(
                             db=db,
                         )
                         confirm = confirm + "\n\n---\n\n" + rag_result["answer"]
+
+                        # ── Token deduction for background RAG ────────────────
+                        from app.services.plans import UsageTracker
+                        if user_obj.organization_id:
+                            await UsageTracker.deduct_tokens(
+                                str(user_obj.organization_id),
+                                rag_result["tokens"],
+                                db
+                            )
+
                         log.info("auto_organizer: answered user_message after classification",
                                  project_id=project_id, tokens=rag_result.get("tokens"))
                 except Exception as rag_exc:

@@ -193,7 +193,7 @@ async def list_documents(
     from app.models.models import UserRole as UR
     from sqlalchemy import and_
     # Build dept filter for non-admin users
-    if user.role in (UR.ADMIN, UR.SUPER_ADMIN):
+    if user.role in (UR.ADMIN, UR.SUPER_ADMIN, UR.ORG_ADMIN):
         dept_filter = True  # see all
         result = await db.execute(
             select(Document)
@@ -239,9 +239,9 @@ async def upload_document(
     await _get_project(project_id, user, db)
 
     # ── Department access enforcement ───────────────────────────────
-    # admin/super_admin can upload to any dept; others are restricted
+    # admin/super_admin/org_admin can upload to any dept; others are restricted
     from app.models.models import UserRole as UR
-    if user.role not in (UR.ADMIN, UR.SUPER_ADMIN):
+    if user.role not in (UR.ADMIN, UR.SUPER_ADMIN, UR.ORG_ADMIN):
         _dept_defaults = {
             "hr_analyst": ["hr", "admin", "general"],
             "analyst"   : ["general"],

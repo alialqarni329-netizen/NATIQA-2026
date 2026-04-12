@@ -189,6 +189,18 @@ async def integration_chat(
         ip=request.client.host if request.client else "unknown",
     )
 
+    # ── Token deduction ─────────────────────────────────────────────
+    from app.services.plans import UsageTracker
+    from app.core.database import AsyncSessionLocal
+    if current_user.organization_id:
+        async with AsyncSessionLocal() as db_session:
+            await UsageTracker.deduct_tokens(
+                str(current_user.organization_id),
+                result.tokens_used,
+                db_session
+            )
+            await db_session.commit()
+
     return _result_to_response(result, verbose=body.verbose)
 
 
@@ -206,13 +218,26 @@ async def get_budget(
     current_user = Depends(get_current_user),
 ):
     """حالة الميزانية الكاملة مع تحليل LLM."""
-    _require_roles(current_user, {"analyst", "admin", "super_admin"})
+    _require_roles(current_user, {"analyst", "admin", "super_admin", "org_admin"})
 
     manager = get_integration_manager()
     result  = await manager.process_query(
         query=f"ما حالة الميزانية للسنة المالية {fiscal_year or 'الحالية'}؟",
         user_role=current_user.role.value,
     )
+
+    # ── Token deduction ─────────────────────────────────────────────
+    from app.services.plans import UsageTracker
+    from app.core.database import AsyncSessionLocal
+    if current_user.organization_id:
+        async with AsyncSessionLocal() as db_session:
+            await UsageTracker.deduct_tokens(
+                str(current_user.organization_id),
+                result.tokens_used,
+                db_session
+            )
+            await db_session.commit()
+
     return _result_to_response(result, verbose)
 
 
@@ -226,7 +251,7 @@ async def get_budget_by_cost_center(
     current_user = Depends(get_current_user),
 ):
     """ميزانية قسم أو مركز تكلفة محدد."""
-    _require_roles(current_user, {"analyst", "admin", "super_admin"})
+    _require_roles(current_user, {"analyst", "admin", "super_admin", "org_admin"})
 
     manager = get_integration_manager()
 
@@ -249,6 +274,18 @@ async def get_budget_by_cost_center(
         query=f"تحليل ميزانية مركز التكلفة {cost_center}",
     )
 
+    # ── Token deduction ─────────────────────────────────────────────
+    from app.services.plans import UsageTracker
+    from app.core.database import AsyncSessionLocal
+    if current_user.organization_id:
+        async with AsyncSessionLocal() as db_session:
+            await UsageTracker.deduct_tokens(
+                str(current_user.organization_id),
+                tokens,
+                db_session
+            )
+            await db_session.commit()
+
     return {
         "cost_center": cost_center.upper(),
         "report":      report,
@@ -263,12 +300,25 @@ async def get_purchase_orders(
     status: Optional[str] = None,
     current_user = Depends(get_current_user),
 ):
-    _require_roles(current_user, {"analyst", "admin", "super_admin"})
+    _require_roles(current_user, {"analyst", "admin", "super_admin", "org_admin"})
     manager = get_integration_manager()
     result  = await manager.process_query(
         query="اعرض طلبات الشراء" + (f" بحالة {status}" if status else ""),
         user_role=current_user.role.value,
     )
+
+    # ── Token deduction ─────────────────────────────────────────────
+    from app.services.plans import UsageTracker
+    from app.core.database import AsyncSessionLocal
+    if current_user.organization_id:
+        async with AsyncSessionLocal() as db_session:
+            await UsageTracker.deduct_tokens(
+                str(current_user.organization_id),
+                result.tokens_used,
+                db_session
+            )
+            await db_session.commit()
+
     return _result_to_response(result)
 
 
@@ -277,12 +327,25 @@ async def get_invoices(
     status: Optional[str] = None,
     current_user = Depends(get_current_user),
 ):
-    _require_roles(current_user, {"analyst", "admin", "super_admin"})
+    _require_roles(current_user, {"analyst", "admin", "super_admin", "org_admin"})
     manager = get_integration_manager()
     result  = await manager.process_query(
         query="اعرض الفواتير" + (f" غير المدفوعة" if status == "unpaid" else ""),
         user_role=current_user.role.value,
     )
+
+    # ── Token deduction ─────────────────────────────────────────────
+    from app.services.plans import UsageTracker
+    from app.core.database import AsyncSessionLocal
+    if current_user.organization_id:
+        async with AsyncSessionLocal() as db_session:
+            await UsageTracker.deduct_tokens(
+                str(current_user.organization_id),
+                result.tokens_used,
+                db_session
+            )
+            await db_session.commit()
+
     return _result_to_response(result)
 
 
@@ -451,7 +514,7 @@ async def approve_leave_request(
     الموافقة على طلب إجازة أو رفضه.
     يتطلب دور: `admin` أو `super_admin` أو `hr_analyst`.
     """
-    _require_roles(current_user, {"admin", "super_admin", "hr_analyst"})
+    _require_roles(current_user, {"admin", "super_admin", "hr_analyst", "org_admin"})
 
     from app.integrations.adapters import get_mock_hr
     hr = get_mock_hr()
@@ -553,7 +616,7 @@ async def vault_list_systems(
     current_user = Depends(get_current_user),
 ):
     """قائمة الأنظمة المسجّلة (بدون كشف القيم)."""
-    _require_roles(current_user, {"admin", "super_admin"})
+    _require_roles(current_user, {"admin", "super_admin", "org_admin"})
     vault   = get_vault()
     systems = await vault.list_systems()
     return {"systems": systems, "count": len(systems)}
@@ -585,7 +648,7 @@ async def integration_health(
     current_user = Depends(get_current_user),
 ):
     """ملخص صحة جميع الأنظمة المتكاملة."""
-    _require_roles(current_user, {"admin", "super_admin"})
+    _require_roles(current_user, {"admin", "super_admin", "org_admin"})
     manager  = get_integration_manager()
     summary  = await manager.health_summary()
     return summary

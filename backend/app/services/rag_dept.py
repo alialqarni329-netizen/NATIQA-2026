@@ -34,7 +34,7 @@ ALL_DEPARTMENTS = {
 
 def resolve_user_departments(user) -> Optional[List[str]]:
     role_val = user.role.value if hasattr(user.role, "value") else str(user.role)
-    if role_val in ("admin", "super_admin"):
+    if role_val in ("admin", "super_admin", "org_admin"):
         return None
     depts = user.allowed_depts
     if not depts:
