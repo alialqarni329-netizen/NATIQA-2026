@@ -2,6 +2,8 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.pool import NullPool  # type: ignore
 from app.core.config import settings  # type: ignore
 from app.models.models import Base  # type: ignore
+from app.core.migrations import apply_migrations  # type: ignore
+from app.core.db_utils import async_retry  # type: ignore
 from datetime import datetime, timezone
 import structlog  # type: ignore
 
@@ -32,15 +34,48 @@ async def get_db():
 
 
 async def init_db():
-    """Create tables (models v1 + v2) and seed initial admin user."""
-    # استيراد كل النماذج لضمان إنشاء جداولها
-    from app.models import models      # noqa: F401
+    """
+    Initialise the database at startup.
 
+    Steps (in order):
+      1. Apply schema migrations (adds missing columns, etc.)
+      2. Run create_all() to create any brand-new tables.
+      3. Seed the default admin / dev users (non-fatal if it fails).
+    """
+    # Ensure all model modules are imported so their metadata is registered.
+    from app.models import models  # noqa: F401
+
+    # ── Step 1: Schema migrations ─────────────────────────────────────
+    log.info("init_db: running schema migrations")
+    try:
+        await apply_migrations(engine)
+        log.info("init_db: schema migrations complete")
+    except Exception as exc:
+        log.error("init_db: schema migrations failed", error=str(exc))
+        raise  # Migration failures are fatal — the schema must be correct.
+
+    # ── Step 2: Create any new tables ─────────────────────────────────
+    log.info("init_db: running create_all for new tables")
     async with engine.begin() as conn:
-        # إنشاء جداول models.py
         await conn.run_sync(Base.metadata.create_all)
+    log.info("init_db: database tables ready (v1 + v2)")
 
-    log.info("Database tables created (v1 + v2)")
+    # ── Step 3: Seed default users (non-fatal) ────────────────────────
+    log.info("init_db: seeding default admin users")
+    try:
+        await _seed_admin_with_retry()
+        log.info("init_db: admin seeding complete")
+    except Exception as exc:
+        log.error(
+            "init_db: admin seeding failed — app will continue without seed data",
+            error=str(exc),
+        )
+        # Intentionally swallowed: seeding is non-critical.
+
+
+@async_retry(max_attempts=3, initial_delay=1.0, max_delay=2.0)
+async def _seed_admin_with_retry():
+    """Thin retry wrapper around seed_admin()."""
     await seed_admin()
 
 
