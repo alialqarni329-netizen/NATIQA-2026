@@ -51,10 +51,20 @@ async def seed_admin():
         ApprovalStatus, SubscriptionPlan
     )
     from app.core.security import hash_password
-    from sqlalchemy import select
+    from sqlalchemy import select, text
     import uuid as _uuid
 
     async with AsyncSessionLocal() as session:
+        # 0. Gracefully handle schema mismatch (e.g. during migration)
+        # Check if subscription_plan column exists in organizations
+        try:
+            await session.execute(text("SELECT subscription_plan FROM organizations LIMIT 1"))
+            schema_ok = True
+        except Exception:
+            log.warning("Schema mismatch detected in organizations table. Seeding might be incomplete.")
+            schema_ok = False
+            await session.rollback()
+
         # 1. Ensure a Default Organization exists
         org_result = await session.execute(
             select(Organization).where(Organization.name == "Natiqa Default")
@@ -62,21 +72,25 @@ async def seed_admin():
         org = org_result.scalar_one_or_none()
         
         if not org:
-            org = Organization(
-                name="Natiqa Default",
-                tax_number="DEV-123456789",
-                document_type=DocumentType.CR,
-                subscription_plan=SubscriptionPlan.ENTERPRISE, # Enterprise for Dev
-                is_active=True,
-                terms_accepted=True,
-                terms_accepted_at=datetime.now(timezone.utc)
-            )
+            org_params = {
+                "name": "Natiqa Default",
+                "tax_number": "DEV-123456789",
+                "document_type": DocumentType.CR,
+                "is_active": True,
+                "terms_accepted": True,
+                "terms_accepted_at": datetime.now(timezone.utc)
+            }
+            if schema_ok:
+                org_params["subscription_plan"] = SubscriptionPlan.ENTERPRISE
+                org_params["token_balance"] = 1000000 # High balance for default org
+
+            org = Organization(**org_params)
             session.add(org)
             await session.flush()
             log.info("Default Organization created", org_id=str(org.id))
         else:
             # Ensure it has a plan for dev
-            if not org.subscription_plan:
+            if schema_ok and not org.subscription_plan:
                 org.subscription_plan = SubscriptionPlan.ENTERPRISE
             await session.flush()
 
