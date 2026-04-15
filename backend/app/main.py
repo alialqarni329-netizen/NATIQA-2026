@@ -34,16 +34,33 @@ from app.services.trial_scheduler import create_scheduler  # type: ignore  ← P
 log = structlog.get_logger()
 _scheduler = create_scheduler()   # Golden Trial nightly jobs
 
+# ─── Startup state ────────────────────────────────────────────────────
+# Tracks whether init_db() succeeded so /api/health/startup can report it.
+_startup_state: dict = {"status": "pending", "error": None}
+
 # ─── Rate limiter ──────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
-
 
 
 # ─── Lifespan ─────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("Starting NATIQA Platform", version=settings.APP_VERSION)
-    await init_db()
+    try:
+        await init_db()
+        _startup_state["status"] = "ok"
+        log.info("init_db: completed successfully")
+    except Exception as exc:
+        import traceback
+        _startup_state["status"] = "failed"
+        _startup_state["error"] = str(exc)
+        log.error(
+            "init_db: startup failure — app will continue in degraded mode",
+            error=str(exc),
+            traceback=traceback.format_exc(),
+        )
+        # Do NOT re-raise: allow the app to start so health checks remain
+        # reachable and the issue is visible via /api/health/startup.
     _scheduler.start()
     log.info("Golden Trial scheduler started")
     yield
@@ -113,12 +130,15 @@ async def global_exception_handler(request: Request, exc: Exception):
     import uuid as _uuid
     error_trace = traceback.format_exc()
     error_id = _uuid.uuid4().hex[:12]
+    request_id = request.headers.get("X-Request-ID", error_id)
     log.error(
         "Unhandled Exception",
         error_id=error_id,
+        request_id=request_id,
         error=str(exc),
         error_type=type(exc).__name__,
         path=request.url.path,
+        method=request.method,
         traceback=error_trace,
     )
     # في الإنتاج: لا نكشف تفاصيل الخطأ — نرجع error_id فقط للمتابعة
@@ -129,7 +149,11 @@ async def global_exception_handler(request: Request, exc: Exception):
             "error_msg": str(exc),
             "path": request.url.path,
         }
-    response = JSONResponse(status_code=500, content=content)
+    response = JSONResponse(
+        status_code=500,
+        content=content,
+        headers={"X-Request-ID": request_id},
+    )
     return _add_cors_headers(request, response)
 
 @app.exception_handler(404)
@@ -207,4 +231,28 @@ async def health(db: AsyncSession = Depends(get_db)):
     if not healthy:
         return JSONResponse(status_code=503, content={**payload, "status": "unhealthy"})
 
+    return payload
+
+
+@app.get("/api/health/startup", tags=["Health"])
+async def startup_health():
+    """
+    Reports the outcome of the startup initialisation sequence (init_db).
+
+    Returns 200 when startup completed successfully.
+    Returns 503 when startup failed, with the error message included.
+    This endpoint is always reachable regardless of DB state, making it
+    useful for diagnosing startup failures without crashing the worker.
+    """
+    status_val = _startup_state.get("status", "pending")
+    payload = {
+        "startup_status": status_val,
+        "version": settings.APP_VERSION,
+        "environment": settings.ENVIRONMENT,
+    }
+    if status_val == "failed":
+        payload["error"] = _startup_state.get("error")
+        return JSONResponse(status_code=503, content=payload)
+    if status_val == "pending":
+        return JSONResponse(status_code=503, content=payload)
     return payload
