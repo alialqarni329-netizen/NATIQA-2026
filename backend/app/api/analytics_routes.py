@@ -45,12 +45,22 @@ async def get_analytics_summary(
     
     start_date = get_time_range(days)
 
+    # ── Multi-tenancy: stats are shared for the organization ──────────
+    # Defensive Check: Does Project.organization_id exist in DB?
+    try:
+        await db.execute(select(Project.organization_id).limit(1))
+        has_org_col = True
+    except Exception:
+        log.warning("Project.organization_id column missing in analytics - falling back to owner_id")
+        has_org_col = False
+        await db.rollback()
+
     # 1. Summary Cards
     # ────────────────────────────────────────────────────────────────
     # Base filters for Multi-Tenancy
     if is_admin:
         p_filter = True
-    elif org_id:
+    elif has_org_col and org_id:
         p_filter = (Project.organization_id == org_id)
     else:
         p_filter = (Project.owner_id == current.id)

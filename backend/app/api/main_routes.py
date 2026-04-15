@@ -803,7 +803,16 @@ async def dashboard_stats(
     db: AsyncSession = Depends(get_db),
 ):
     # ── Multi-tenancy: stats are shared for the organization ──────────
-    if user.organization_id:
+    # Defensive Check: Does Project.organization_id exist in DB?
+    try:
+        await db.execute(select(Project.organization_id).limit(1))
+        has_org_col = True
+    except Exception:
+        log.warning("Project.organization_id column missing - falling back to owner_id")
+        has_org_col = False
+        await db.rollback()
+
+    if has_org_col and user.organization_id:
         filter_clause = (Project.organization_id == user.organization_id)
     else:
         filter_clause = (Project.owner_id == user.id)
@@ -834,11 +843,14 @@ async def dashboard_stats(
     if user.organization_id:
         try:
             from app.models.models import Organization
+            # Defensive Check: Does Organization.token_balance exist?
+            await db.execute(select(Organization.token_balance).limit(1))
             res = await db.execute(select(Organization.token_balance).where(Organization.id == user.organization_id))
             token_balance = res.scalar() or 0
         except Exception as e:
-            log.warning("Failed to fetch token balance", error=str(e))
+            log.warning("Failed to fetch token balance - column likely missing", error=str(e))
             token_balance = 0
+            await db.rollback()
 
     return {
         "projects": project_count or 0,
